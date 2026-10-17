@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>工具箱</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app">
+  <!-- 顶部栏 -->
+  <header class="topbar">
+    <button class="back-btn" id="btnBack" aria-label="返回">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <div class="topbar-title" id="pageTitle">概览</div>
+    <div class="topbar-right">
+      <span class="conn-dot" id="connDot"></span>
+      <button class="icon-btn" id="btnSettings" aria-label="设置">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="content">
+
+    <!-- ===== 概览 ===== -->
+    <section class="page" id="page-overview">
+      <div class="greet-row">
+        <div>
+          <div class="greet" id="greetText">早上好</div>
+          <div class="date-line" id="dateLine">--</div>
+          <div class="sync-status" id="syncStatusText"></div>
+        </div>
+        <button class="sync-btn" id="btnSync">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
+          同步
+        </button>
+      </div>
+
+      <!-- AI 快捷输入条 (工作台主入口) -->
+      <div class="ai-quickbar">
+        <input class="text-input ai-quick-input" id="aiQuickInput" placeholder="问问 AI：总结今天 / 明日计划 / 薄弱点…" />
+        <button class="btn primary ai-send" id="aiQuickSend" aria-label="发送">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+      </div>
+
+      <!-- 今日焦点 (聚合) -->
+      <div class="card">
+        <div class="card-head"><span>今日焦点</span></div>
+        <div class="focus-grid">
+          <div class="focus-item" data-goto="pomodoro">
+            <div class="focus-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5"/></svg>
+              番茄
+            </div>
+            <div class="focus-val" id="focusPomo">-</div>
+          </div>
+          <div class="focus-item" data-goto="health">
+            <div class="focus-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+              睡眠
+            </div>
+            <div class="focus-val" id="focusSleep">-</div>
+          </div>
+          <div class="focus-item" data-goto="health">
+            <div class="focus-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6h12v12H6z"/><path d="M9 9h6v6H9z"/></svg>
+              运动
+            </div>
+            <div class="focus-val" id="focusEx">-</div>
+          </div>
+        </div>
+        <div class="focus-row">
+          <div class="focus-label">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            今日目标
+          </div>
+          <div class="focus-text" id="focusTask">暂无任务</div>
+        </div>
+        <div class="focus-row">
+          <div class="focus-label">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            今日收藏
+          </div>
+          <div class="focus-text" id="focusFav">抖音 - · 小红书 -</div>
+        </div>
+      </div>
+
+      <!-- 快捷入口网格 -->
+      <div class="quick-grid">
+        <button class="quick-item" data-goto="diary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+          <span>日记</span>
+        </button>
+        <button class="quick-item" data-goto="pomodoro">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5"/><path d="M9 2h6"/></svg>
+          <span>专注</span>
+        </button>
+        <button class="quick-item" data-goto="health">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+          <span>健康</span>
+        </button>
+        <button class="quick-item" data-goto="fav">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          <span>收藏</span>
+        </button>
+        <button class="quick-item" data-goto="ai">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+          <span>AI</span>
+        </button>
+        <button class="quick-item" data-goto="photos">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+          <span>照片</span>
+        </button>
+      </div>
+
+      <div class="card" data-goto="diary">
+        <div class="card-head">
+          <span>今日日记</span>
+          <span class="card-arrow">›</span>
+        </div>
+        <div class="diary-preview" id="diaryPreview">未连接服务器</div>
+      </div>
+
+      <button class="btn plain block" id="btnDailyReport">生成今日日报 → 同步 Obsidian</button>
+
+      <div class="card">
+        <div class="card-head"><span>DeepTutor</span></div>
+        <div class="fav-summary" id="deptSummary">-</div>
+      </div>
+    </section>
+
+    <!-- ===== 日记/周记/月记 ===== -->
+    <section class="page hidden" id="page-diary">
+      <div class="card diary-card">
+        <div class="card-head">
+          <span>文档编辑</span>
+          <span class="save-tag" id="diarySaveTag">未保存</span>
+        </div>
+        <div class="doc-selector">
+          <div class="seg" id="docTypeSeg">
+            <button class="seg-btn active" data-type="diary">日记</button>
+            <button class="seg-btn" data-type="weekly">周记</button>
+            <button class="seg-btn" data-type="monthly">月记</button>
+          </div>
+          <input type="date" class="date-input doc-key" id="docKeyDiary" />
+          <input type="week" class="date-input doc-key hidden" id="docKeyWeekly" />
+          <input type="month" class="date-input doc-key hidden" id="docKeyMonthly" />
+        </div>
+        <div class="diary-meta" id="diaryMeta">-</div>
+        <textarea class="diary-editor" id="diaryEditor" placeholder="编辑文档内容…" spellcheck="false"></textarea>
+        <div class="diary-imgs" id="diaryImgs"></div>
+        <div class="btn-row">
+          <button class="btn primary" id="btnDiarySave">保存并同步</button>
+          <button class="btn plain" id="btnDiaryImg">📷 插图</button>
+          <button class="btn plain" id="btnDiaryReload">重新加载</button>
+        </div>
+        <input type="file" accept="image/*" id="diaryImgInput" class="hidden-input" />
+        <div class="hint">📷 图片将上传到 PC Obsidian「工作台照片/月份/」并插入文档；PC 日记里的 ![[图片]] 也会显示在这里，点开可下载</div>
+      </div>
+    </section>
+
+    <!-- ===== 使用 ===== -->
+
+    <!-- ===== 健康 ===== -->
+    <section class="page hidden" id="page-health">
+      <div class="card">
+        <div class="card-head"><span>😴 睡眠</span></div>
+        <div class="health-row">
+          <div class="health-field">
+            <label class="field-label">入睡</label>
+            <input type="time" class="date-input" id="sleepStart" value="23:30" />
+          </div>
+          <div class="health-field">
+            <label class="field-label">醒来</label>
+            <input type="time" class="date-input" id="sleepEnd" value="07:00" />
+          </div>
+          <button class="btn primary sm health-btn" id="btnSleepAdd">记录</button>
+        </div>
+        <div class="health-hint" id="sleepHint">睡眠 7小时30分</div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><span>🏃 运动</span></div>
+        <div class="health-row">
+          <select class="date-input" id="exType">
+            <option value="跑步">跑步</option>
+            <option value="健身">健身</option>
+            <option value="篮球">篮球</option>
+            <option value="羽毛球">羽毛球</option>
+            <option value="骑行">骑行</option>
+            <option value="其他">其他</option>
+          </select>
+          <input type="number" class="date-input health-min" id="exMin" placeholder="分钟" min="1" />
+          <button class="btn primary sm health-btn" id="btnExAdd">记录</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><span>今日健康</span></div>
+        <div class="today-row">
+          <div><div class="today-label">睡眠</div><div class="today-num sm-num" id="healthSleepToday">-</div></div>
+          <div><div class="today-label">运动</div><div class="today-num sm-num" id="healthExToday">-</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><span>近 7 天趋势</span></div>
+        <div class="chart" id="healthChart"></div>
+      </div>
+    </section>
+
+    <!-- ===== 收藏 ===== -->
+    <section class="page hidden" id="page-fav">
+      <div class="card">
+        <div class="card-head">
+          <span>当日收藏</span>
+          <input type="date" class="date-input" id="favDate" />
+        </div>
+        <div class="seg" id="favPlatformSeg">
+          <button class="seg-btn active" data-p="all">全部</button>
+          <button class="seg-btn" data-p="douyin">抖音</button>
+          <button class="seg-btn" data-p="xiaohongshu">小红书</button>
+        </div>
+        <div class="fav-list" id="favList"><div class="empty">加载中…</div></div>
+      </div>
+    </section>
+
+    <!-- ===== 专注 (番茄钟) ===== -->
+    <section class="page hidden" id="page-pomodoro">
+      <div class="card">
+        <div class="seg" id="pomoModeSeg">
+          <button class="seg-btn active" data-mode="focus">专注</button>
+          <button class="seg-btn" data-mode="break">休息</button>
+        </div>
+        <div class="timer-wrap">
+          <svg class="timer-ring" viewBox="0 0 200 200">
+            <circle class="ring-bg" cx="100" cy="100" r="88"/>
+            <circle class="ring-fg" id="ringFg" cx="100" cy="100" r="88"/>
+          </svg>
+          <div class="timer-center">
+            <div class="timer-time" id="timerTime">25:00</div>
+            <div class="timer-task" id="timerTask">未选择任务</div>
+          </div>
+        </div>
+        <div class="btn-row">
+          <button class="btn primary" id="btnPomoToggle">开始</button>
+          <button class="btn plain" id="btnPomoReset">重置</button>
+          <button class="btn plain" id="btnPomoSkip">跳过</button>
+        </div>
+        <div class="today-stats" id="pomoToday">今日：0 个番茄 · 0 分钟</div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><span>任务</span><span class="muted sm" id="taskCount">0 个</span></div>
+        <div class="task-input-row">
+          <input class="text-input task-input" id="taskInput" placeholder="添加任务，完成后自动勾选…" />
+          <button class="btn primary sm" id="btnAddTask">添加</button>
+        </div>
+        <div class="task-list" id="taskList"><div class="empty">暂无任务</div></div>
+      </div>
+    </section>
+
+    <!-- ===== AI 助手 (WorkBuddy 风格) ===== -->
+    <section class="page hidden" id="page-ai">
+      <div class="ai-chat" id="aiChat">
+        <div class="ai-welcome">
+          <div class="ai-welcome-title">👋 我是你的 AI 数字同事</div>
+          <div class="ai-welcome-sub">我能读懂你的学习、使用、健康、任务与收藏数据<br>随时总结、分析、给建议、定计划</div>
+          <div class="ai-chips" id="aiChips">
+            <button class="chip" data-q="总结一下我今天的学习情况">📊 今日总结</button>
+            <button class="chip" data-q="分析我今天的使用时间和效率，给建议">⏱ 使用分析</button>
+            <button class="chip" data-q="根据我的情况制定明天的学习计划">📋 明日计划</button>
+            <button class="chip" data-q="看看我的考研薄弱点，给复习建议">🎯 薄弱点建议</button>
+            <button class="chip" data-q="复盘一下昨天的情况，找出问题">🔙 复盘昨天</button>
+            <button class="chip" data-q="总结一下本周的学习和使用情况">📅 本周总结</button>
+            <button class="chip" data-q="分析我的高效时段，什么时候学习效率最高">⚡ 高效时段</button>
+            <button class="chip" data-q="帮我给未完成任务排个优先级，今天先做什么">📌 任务排序</button>
+            <button class="chip" data-q="根据我的睡眠和运动数据给健康建议">🏃 健康建议</button>
+          </div>
+        </div>
+      </div>
+      <div class="ai-inputbar">
+        <input class="text-input ai-input" id="aiInput" placeholder="问点什么…" />
+        <button class="btn primary ai-send" id="aiSend">发送</button>
+      </div>
+    </section>
+
+    <!-- ===== 照片同步 ===== -->
+    <section class="page hidden" id="page-photos">
+      <div class="card">
+        <div class="card-head"><span>照片同步</span><span class="muted sm" id="photoCount">0 张</span></div>
+        <input type="file" accept="image/*" id="photoInput" class="hidden-input" />
+        <button class="btn primary block" id="btnPhotoPick">选择照片上传 → 同步到 Obsidian</button>
+        <div class="hint" id="photoHint">照片将同步到 PC Obsidian 的「工作台照片/月份/」目录（需在线）</div>
+      </div>
+      <div class="card">
+        <div class="card-head"><span>已同步照片</span></div>
+        <div class="photo-grid" id="photoGrid"><div class="empty">暂无照片</div></div>
+      </div>
+    </section>
+
+    <!-- ===== 图片查看器 (日记图片放大/下载) ===== -->
+    <div class="viewer hidden" id="photoViewer">
+      <img id="photoViewerImg" alt="" />
+      <div class="viewer-bar">
+        <button class="btn primary" id="btnViewerSave">下载到相册</button>
+        <button class="btn plain" id="btnViewerClose">关闭</button>
+      </div>
+    </div>
+
+    <!-- ===== 设置 ===== -->
+    <section class="page hidden" id="page-settings">
+      <div class="card">
+        <div class="card-head"><span>服务器</span><span class="conn-dot" id="connDot"></span></div>
+        <div class="hint" id="serverInfo">地址在「门户 · 设置」中统一配置（支持自动发现）</div>
+        <div class="btn-row">
+          <button class="btn plain" id="btnGoPortal">去门户设置</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><span>背景</span></div>
+        <div class="bg-grid" id="bgGrid"></div>
+        <div class="btn-row">
+          <button class="btn plain" id="btnPickBg">从相册选择</button>
+          <button class="btn plain" id="btnClearBg">恢复默认</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><span>关于</span></div>
+        <div class="hint">工具箱 · 离线优先 · 数据仅存于本机局域网 · 学习中枢的一部分</div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 底部导航: 概览-日记-专注-使用-健康-收藏 -->
+  <nav class="tabbar">
+    <button class="tab active" data-page="overview">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+      <span>概览</span>
+    </button>
+    <button class="tab" data-page="diary">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+      <span>日记</span>
+    </button>
+    <button class="tab" data-page="pomodoro">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5"/><path d="M9 2h6"/></svg>
+      <span>专注</span>
+    </button>
+    <button class="tab" data-page="health">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+      <span>健康</span>
+    </button>
+    <button class="tab" data-page="fav">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+      <span>收藏</span>
+    </button>
+    <button class="tab" data-page="ai">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+      <span>AI</span>
+    </button>
+  </nav>
+</div>
+
+<script src="../server.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 机械题库图标：深钢底 + 琥珀金齿轮（8 齿）+ 白色对勾。
+         齿轮=机械，对勾=答题/判分。替代原学习中枢「工」字图标。 -->
+    <!-- 齿轮齿：8 个旋转 45° 的矩形齿 -->
+    <group android:rotation="0" android:pivotX="54" android:pivotY="54">
+        <path android:pathData="M48.5,25 h11 v10 h-11 z" android:fillColor="#e8a020" />
+    </group>
+    <group android:rotation="45" android:pivotX="54" android:pivotY="54">
+        <path android:pathData="M48.5,25 h11 v10 h-11 z" android:fillColor="#e8a020" />
+    </group>
+    <group android:rotation="90" android:pivotX="54" android:pivotY="54">
+        <path android:pathData="M48.5,25 h11 v10 h-11 z" android:fillColor="#e8a020" />
+    </group>
+    <group android:rotation="135" android:pivotX="54" android:pivotY="54">
+        <path android:pathData="M48.5,25 h11 v10 h-11 z" android:fillColor="#e8a020" />
+    </group>
+    <group android:rotation="180" android:pivotX="54" android:pivotY="54">
+        <path android:pathData="M48.5,25 h11 v10 h-11 z" android:fillColor="#e8a020" />
+    </group>
+    <group android:rotation="225" android:pivotX="54" android:pivotY="54">
+        <path android:pathData="M48.5,25 h11 v10 h-11 z" android:fillColor="#e8a020" />
+    </group>
+    <group android:rotation="270" android:pivotX="54" android:pivotY="54">
+        <path android:pathData="M48.5,25 h11 v10 h-11 z" android:fillColor="#e8a020" />
+    </group>
+    <group android:rotation="315" android:pivotX="54" android:pivotY="54">
+        <path android:pathData="M48.5,25 h11 v10 h-11 z" android:fillColor="#e8a020" />
+    </group>
+    <!-- 齿轮环（粗描边圆，与齿交接） -->
+    <path
+        android:pathData="M32,54 a22,22 0 1,0 44,0 a22,22 0 1,0 -44,0"
+        android:strokeColor="#e8a020"
+        android:strokeWidth="7"
+        android:fillColor="#00000000" />
+    <!-- 中心孔（露背景色） -->
+    <path
+        android:pathData="M44,54 a10,10 0 1,0 20,0 a10,10 0 1,0 -20,0"
+        android:fillColor="#1b2530" />
+    <!-- 对勾 -->
+    <path
+        android:pathData="M48.8,54.6 l4,4 l7.6,-8"
+        android:strokeColor="#ffffff"
+        android:strokeWidth="3.4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+</vector>

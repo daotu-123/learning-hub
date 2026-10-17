@@ -1,0 +1,44 @@
+# ===== 构建产物 =====
+build/
+*.apk
+*.aab
+*.idsig
+*.exe
+
+# ===== 工具链（约 900MB，不入库）=====
+build-tools/
+
+# ===== Python =====
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# ===== 运行时数据与私有数据 =====
+server/data/
+*.db
+*.log
+
+# ===== 签名与凭证 =====
+keystore/
+keystore.properties
+*.jks
+*.keystore
+
+# ===== Gradle / IDE =====
+.gradle/
+.idea/
+*.iml
+local.properties
+captures/
+
+# ===== 开发过程预览图 =====
+exe/adaptive_preview.png
+exe/android_final_check.png
+
+# ===== 系统与编辑器 =====
+.DS_Store
+Thumbs.db
+*.swp
+*.bak
