@@ -4,7 +4,7 @@
  *      → Native.setWebVersion → Native.reloadApp 重载（MainActivity 的 WwwHandler 缓存优先）
  * 只在 APK 内运行；服务端不可达时静默跳过（离线也能正常用内置页面）。
  */
-import { IS_APP, getServer } from '@/api/server'
+import { IS_APP, getServer, getToken } from '@/api/server'
 
 const TEXT_EXT = /\.(html|htm|js|mjs|css|json|svg|map)$/i
 const TIMEOUT_MS = 8000
@@ -17,7 +17,11 @@ interface Manifest {
 function withTimeout(url: string): Promise<Response> {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
-  return fetch(url, { cache: 'no-store', signal: ctrl.signal }).finally(() => clearTimeout(timer))
+  // 服务端对非回环请求要求令牌，热更新走的是同一个鉴权中间件
+  const tok = getToken()
+  const init: RequestInit = { cache: 'no-store', signal: ctrl.signal }
+  if (tok) init.headers = { 'X-Token': tok }
+  return fetch(url, init).finally(() => clearTimeout(timer))
 }
 
 /** 逐段编码，保留 / 分隔（后端是 {name:path} 路由，编码成 %2F 会匹配不上） */

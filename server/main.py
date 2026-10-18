@@ -10,6 +10,7 @@ import re
 import json
 import time
 import socket
+import secrets
 import sqlite3
 import hashlib
 import threading
@@ -18,9 +19,9 @@ import sys
 from pathlib import Path
 from typing import Optional, List
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 import urllib.request
 import uvicorn
@@ -511,6 +512,53 @@ def save_settings(patch: dict) -> dict:
     return s
 
 
+# ---------------------------------------------------------------- 访问令牌
+# 威胁模型（2026-10-18 审查）：服务绑 0.0.0.0:8637 且 CORS 全开、无鉴权，
+# 同网段任意设备可直接读取日记/健康/照片，并可通过 PUT /api/hub/aiconfig
+# 覆盖 DeepSeek Key。此外热更新通道 /api/hub/webfile 无鉴权 + 明文 HTTP，
+# 改写一份 JS 即可拿到 window.Native 的全部原生能力。
+#
+# 策略：本机回环请求放行（桌面浏览器体验不变），非回环必须带令牌。
+# 令牌来源优先级：环境变量 > settings.json > 首次自动生成并落盘。
+# 客户端可用 X-Token 头，或用 ?token= 查询参数（<img>/<a> 无法设请求头）。
+AUTH_TOKEN_ENV = "WORKBENCH_AUTH_TOKEN"
+
+# 这些路径在任何情况下都不校验令牌：
+#  - 静态页面/资源：不校验，否则页面本身都打不开
+#  - /api/hub/netinfo：App 首次发现服务器地址时还不知道令牌
+#  - /api/auth/token：仅回环可读，桌面端用它把令牌抄到手机上
+AUTH_EXEMPT_API = {"/api/hub/netinfo", "/api/auth/token"}
+
+
+def _loopback(host: str) -> bool:
+    """判断请求是否来自本机。"""
+    if not host:
+        return False
+    return host in ("127.0.0.1", "::1", "localhost")
+
+
+def auth_token() -> str:
+    """读取（必要时生成）访问令牌。"""
+    env = (os.environ.get(AUTH_TOKEN_ENV) or "").strip()
+    if env:
+        return env
+    s = get_settings()
+    tok = (s.get("auth_token") or "").strip()
+    if not tok:
+        tok = secrets.token_urlsafe(24)
+        save_settings({"auth_token": tok})
+    return tok
+
+
+def _request_token(request) -> str:
+    """从请求里取令牌：优先 X-Token 头，其次 token 查询参数。"""
+    h = request.headers.get("x-token") or request.headers.get("X-Token")
+    if h:
+        return h.strip()
+    q = request.query_params.get("token")
+    return (q or "").strip()
+
+
 # ---------------------------------------------------------------- API models
 class UsageReport(BaseModel):
     date: str
@@ -545,7 +593,24 @@ app = FastAPI(title="Workbench Sync Server", version="1.1.0")
 # 拒绝该预检（400 Disallowed CORS private-network），必须在此显式放行。
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    # 2026-10-18 收紧：原来是 allow_origins=["*"]，配合「无鉴权 + 绑 0.0.0.0」
+    # 等于把日记/健康/照片和 AI Key 完全暴露给同网段。现改为白名单：
+    #   - APK 页面源 appassets.androidplatform.net
+    #   - 本机、局域网私有网段、Tailscale 的 100.64.0.0/10
+    # 真正的访问控制靠 X-Token 鉴权中间件，CORS 只是收敛面。
+    allow_origins=[
+        "http://appassets.androidplatform.net",
+        "https://appassets.androidplatform.net",
+    ],
+    allow_origin_regex=(
+        r"^https?://("
+        r"localhost|127\.0\.0\.1|\[::1\]|"
+        r"192\.168\.\d{1,3}\.\d{1,3}|"
+        r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
+        r"172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|"
+        r"100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}"
+        r")(?::\d+)?$"
+    ),
     allow_methods=["*"],
     allow_headers=["*"],
     allow_private_network=True,
@@ -558,6 +623,43 @@ async def allow_private_network(request, call_next):
     if request.headers.get("access-control-request-private-network") == "true":
         resp.headers["Access-Control-Allow-Private-Network"] = "true"
     return resp
+
+
+@app.get("/api/auth/token")
+def auth_token_endpoint(request: Request):
+    """把令牌交给本机（仅回环）。桌面浏览器用它显示，供手机端录入。"""
+    host = request.client.host if request.client else ""
+    if not _loopback(host):
+        raise HTTPException(status_code=403, detail="仅本机可读取令牌")
+    return {"token": auth_token()}
+
+
+@app.middleware("http")
+async def auth_guard(request: Request, call_next):
+    """非回环访问 /api/* 必须带令牌。
+
+    放行规则：
+      1) 非 /api/ 路径（静态页面与资源）——不校验，否则页面本身打不开
+      2) AUTH_EXEMPT_API 白名单（netinfo 供首次发现服务器；auth/token 仅回环可读）
+      3) 本机回环请求——桌面浏览器体验不变
+    其余一律要求 X-Token 头或 ?token= 参数。
+    """
+    path = request.url.path
+    if not path.startswith("/api/"):
+        return await call_next(request)
+    if path in AUTH_EXEMPT_API:
+        return await call_next(request)
+    host = request.client.host if request.client else ""
+    if _loopback(host):
+        return await call_next(request)
+    expected = auth_token()
+    given = _request_token(request)
+    if expected and given and secrets.compare_digest(given, expected):
+        return await call_next(request)
+    return JSONResponse(
+        {"error": "unauthorized", "hint": "非本机访问需带 X-Token 请求头（或在设置页录入令牌）"},
+        status_code=401,
+    )
 
 # Learning Hub 只读中枢（/api/hub/* + /hub 页面）
 from hub.router import router as hub_router, find_tailscale_ip

@@ -2,7 +2,7 @@
    学习中枢状态层（TS 重写，替代原 hub.html 内联脚本）
    ============================================================ */
 import { reactive, readonly, ref } from 'vue'
-import { api, IS_APP, setServer as saveServerAddr, getServer } from '@/api/server'
+import { api, IS_APP, setServer as saveServerAddr, getServer, getToken } from '@/api/server'
 
 /* ---------------- 基础 ---------------- */
 export function localDate(d: Date): string {
@@ -63,11 +63,24 @@ const WP_GRADIENTS: Record<string, string> = {
 }
 export const ACCENT_PRESETS = ['#d7ef83', '#60a5fa', '#c084fc', '#f472b6', '#fbbf24', '#34d399']
 
-const SERVER = getServer()
-const API = SERVER + '/api/hub'
+// 服务器地址改为「每次调用时取」，不再是模块加载时的快照：
+// 原写法 const SERVER = getServer() 会让用户改了服务器地址后仍打旧地址，直到重载页面。
+function apiBase(): string {
+  return getServer() + '/api/hub'
+}
+
+/** 带令牌的请求头。服务端对非回环请求要求 X-Token。 */
+function hubHeaders(extra?: Record<string, string>): Record<string, string> {
+  const h: Record<string, string> = { 'Content-Type': 'application/json' }
+  const tok = getToken()
+  if (tok) h['X-Token'] = tok
+  return Object.assign(h, extra || {})
+}
 
 async function apiHub<T = any>(path: string, opts: RequestInit = {}): Promise<T> {
-  const r = await fetch(API + path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts))
+  const r = await fetch(apiBase() + path, Object.assign({}, opts, {
+    headers: hubHeaders((opts as any).headers),
+  }))
   if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200))
   return r.json()
 }
@@ -145,8 +158,8 @@ export async function saveSettings(sloganInput: string) {
     glass: state.settings.glass,
     slogan: sloganInput,
   }
-  const r = await fetch(API + '/settings', {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  const r = await fetch(apiBase() + '/settings', {
+    method: 'PUT', headers: hubHeaders(), body: JSON.stringify(body),
   })
   if (!r.ok) throw new Error(await r.text())
   state.settings = await r.json()
@@ -159,9 +172,9 @@ export async function uploadWallpaper(file: File) {
   const reader = new FileReader()
   reader.onload = async () => {
     try {
-      const r = await fetch(API + '/wallpaper', {
+      const r = await fetch(apiBase() + '/wallpaper', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: hubHeaders(),
         body: JSON.stringify({ data: reader.result }),
       })
       if (!r.ok) throw new Error(await r.text())
@@ -177,8 +190,8 @@ export function setSettingWallpaper(wp: string) { state.settings.wallpaper = wp;
 export function setSettingAccent(accent: string) { state.settings.accent = accent; applyAccent() }
 export function setSettingGlass(g: number) { state.settings.glass = g; applyGlass() }
 export async function saveAiKey(key: string) {
-  const r = await fetch(API + '/aiconfig', {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+  const r = await fetch(apiBase() + '/aiconfig', {
+    method: 'PUT', headers: hubHeaders(),
     body: JSON.stringify({ key: key.trim() }),
   })
   if (!r.ok) throw new Error((await r.json()).detail || ('HTTP ' + r.status))
@@ -223,7 +236,7 @@ export async function loadToday() {
     state.tasks = []
   } else {
     let txt: any = { content: '' }
-    try { txt = await (await fetch(SERVER + '/api/diary?date=' + state.date)).json() } catch (e) { /* noop */ }
+    try { txt = await (await fetch(getServer() + '/api/diary?date=' + state.date, { headers: hubHeaders() })).json() } catch (e) { /* noop */ }
     state.tasks = parseTasks(txt.content || '')
   }
   return t
@@ -405,9 +418,9 @@ function pomoResumeFromStorage() {
   const remain = Math.round((saved.endAt - Date.now()) / 1000)
   if (remain <= 0) {
     localStorage.removeItem('hub-pomo')
-    fetch(API + '/focus', {
+    fetch(apiBase() + '/focus', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: hubHeaders(),
       body: JSON.stringify({ task: saved.task || '', minutes: saved.minutes || 25 }),
     }).then(() => showToast('上次的番茄已自动补记 ✓')).catch(() => { })
     return
@@ -432,9 +445,9 @@ async function pomoComplete() {
   const ta = document.getElementById('pomoTask') as HTMLInputElement | null
   const task = ta ? ta.value.trim() : ''
   try {
-    await fetch(API + '/focus', {
+    await fetch(apiBase() + '/focus', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: hubHeaders(),
       body: JSON.stringify({ task: task, minutes: mins }),
     })
     showToast('专注完成 +' + mins + ' 分钟 ✓')
@@ -548,9 +561,9 @@ export async function loadLibrary() {
 
 /* ---------------- AI 课堂（OpenMAIC） ---------------- */
 async function apiSend(path: string, method: string, body?: any) {
-  const r = await fetch(API + path, {
+  const r = await fetch(apiBase() + path, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers: hubHeaders(),
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   if (!r.ok) {

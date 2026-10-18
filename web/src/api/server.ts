@@ -5,6 +5,7 @@
    - discover() UDP 自动发现 PC（App 内）
    ============================================================ */
 const KEY = 'hub_server'
+const TOKEN_KEY = 'hub_token'
 export const IS_APP: boolean = typeof window !== 'undefined' && typeof window.Native !== 'undefined'
 
 export function getServer(): string {
@@ -18,6 +19,25 @@ export function setServer(v: string): string {
   v = String(v || '').trim().replace(/\/+$/, '')
   try { if (IS_APP && window.Native!.savePref) window.Native!.savePref(KEY, v) } catch (e) { /* noop */ }
   try { localStorage.setItem(KEY, v) } catch (e) { /* noop */ }
+  return v
+}
+
+/**
+ * 访问令牌：服务端对「非回环」请求要求 X-Token，用于防止同网段任意设备
+ * 读取日记/健康/照片或改写 AI Key。桌面端本机访问免令牌；手机首次连接时
+ * 需在电脑浏览器打开 /api/auth/token 取一次令牌，填进 App 设置页。
+ */
+export function getToken(): string {
+  let v = ''
+  try { if (IS_APP && window.Native!.loadPref) v = window.Native!.loadPref(TOKEN_KEY, '') || '' } catch (e) { /* noop */ }
+  if (!v) { try { v = localStorage.getItem(TOKEN_KEY) || '' } catch (e) { /* noop */ } }
+  return String(v).trim()
+}
+
+export function setToken(v: string): string {
+  v = String(v || '').trim()
+  try { if (IS_APP && window.Native!.savePref) window.Native!.savePref(TOKEN_KEY, v) } catch (e) { /* noop */ }
+  try { localStorage.setItem(TOKEN_KEY, v) } catch (e) { /* noop */ }
   return v
 }
 
@@ -40,10 +60,15 @@ async function rawFetch<T>(url: string, opts: RequestInit): Promise<T> {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), 8000)
   try {
-    const res = await fetch(url, Object.assign({
-      headers: { 'Content-Type': 'application/json' },
+    // 合并请求头：默认 Content-Type + 令牌，再叠加调用方传入的头
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    const tok = getToken()
+    if (tok) headers['X-Token'] = tok
+    const merged = Object.assign({}, opts, {
+      headers: Object.assign(headers, (opts as any).headers || {}),
       signal: ctrl.signal,
-    }, opts))
+    })
+    const res = await fetch(url, merged)
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
       const err: ApiError = new Error(
