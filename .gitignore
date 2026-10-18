@@ -37,6 +37,14 @@ captures/
 exe/adaptive_preview.png
 exe/android_final_check.png
 
+# ===== 前端工具链与测试产物 =====
+web/node_modules/
+web/dist/
+web/.npm-cache/
+node_modules/
+test-*-bundle.mjs
+web/test-shots/
+
 # ===== 系统与编辑器 =====
 .DS_Store
 Thumbs.db

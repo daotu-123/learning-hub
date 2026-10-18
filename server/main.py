@@ -539,9 +539,25 @@ class PomoReport(BaseModel):
 
 # ---------------------------------------------------------------- app
 app = FastAPI(title="Workbench Sync Server", version="1.1.0")
+# allow_private_network=True：APK 页面源是 http://appassets.androidplatform.net
+# （私有网络地址），访问 LAN 的 http://192.168.x.x:8637 时 Chrome 会发
+# Access-Control-Request-Private-Network 预检。Starlette 的 CORSMiddleware 默认
+# 拒绝该预检（400 Disallowed CORS private-network），必须在此显式放行。
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_private_network=True,
 )
+
+@app.middleware("http")
+async def allow_private_network(request, call_next):
+    """兜底：给带 PNA 预检标记的响应补上 allow-private-network（老版本 Starlette 兼容）。"""
+    resp = await call_next(request)
+    if request.headers.get("access-control-request-private-network") == "true":
+        resp.headers["Access-Control-Allow-Private-Network"] = "true"
+    return resp
 
 # Learning Hub 只读中枢（/api/hub/* + /hub 页面）
 from hub.router import router as hub_router, find_tailscale_ip
@@ -584,6 +600,46 @@ def hub_assets(path: str):
     if not p.exists() or not p.is_file():
         raise HTTPException(status_code=404, detail="文件不存在")
     return FileResponse(str(p))
+
+
+# ------------------------------------------------ 新版单 App（Vue SPA，web/ 构建产物）
+# 三 Tab 合一：学习中枢 / 题库 / 工作台，hash 路由，同时供 Web 与 APK(file://) 使用
+APP_DIST = APP_ROOT / "server" / "web_dist" / "app"
+if not APP_DIST.exists() and getattr(sys, "frozen", False):
+    APP_DIST = Path(sys._MEIPASS) / "web_dist" / "app"
+
+
+@app.get("/app")
+def app_index():
+    """新版单 App 入口（SPA index.html）"""
+    p = APP_DIST / "index.html"
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="SPA 未构建：请先在 web/ 目录执行 npm run build")
+    return FileResponse(str(p))
+
+
+@app.get("/app/{path:path}")
+def app_assets(path: str):
+    """SPA 静态资源（hash 路由，无需服务端回退）"""
+    if not path:
+        path = "index.html"          # /app/ 与 /app 都落到入口
+    if ".." in path or "\\" in path or ":" in path:
+        raise HTTPException(status_code=400, detail="非法路径")
+    p = APP_DIST / path
+    if not p.exists() or not p.is_file():
+        raise HTTPException(status_code=404, detail="文件不存在")
+    if path.endswith(".js"):
+        media = "text/javascript"
+    elif path.endswith(".css"):
+        media = "text/css"
+    elif path.endswith(".html"):
+        media = "text/html"
+    elif path.endswith(".json"):
+        media = "application/json"
+    else:
+        media = None
+    return FileResponse(str(p), media_type=media)
+
 
 LAN_IP = None
 

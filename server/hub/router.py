@@ -33,12 +33,13 @@ WALLPAPER_DIR = DATA_DIR / "wallpapers"
 WALLPAPER_DIR.mkdir(parents=True, exist_ok=True)
 USAGE_DB = DATA_DIR / "usage.db"   # 工作台 SQLite（pomodoro 表）
 
-# 网页热更新源（与 APK assets/www 结构一致；VERSION 为整数版本号）
-WEB_DIST = Path(r"E:\agent\androd-app\server\web_dist")
-if not WEB_DIST.exists() and getattr(sys, "frozen", False):
+# 网页热更新源（单 App：web_dist/app 与 APK assets/www 同构；VERSION 为整数版本号）
+WEB_ROOT = Path(r"E:\agent\androd-app\server\web_dist")
+if not WEB_ROOT.exists() and getattr(sys, "frozen", False):
     # PyInstaller 打包运行时：磁盘路径缺失时回退到包内资源（web_dist 随 --add-data 打入）
-    WEB_DIST = Path(sys._MEIPASS) / "web_dist"
-WEB_VERSION_FILE = WEB_DIST / "VERSION"
+    WEB_ROOT = Path(sys._MEIPASS) / "web_dist"
+WEB_DIST = WEB_ROOT / "app"          # 页面根：热更新按此目录列文件、读内容
+WEB_VERSION_FILE = WEB_ROOT / "VERSION"   # 版本号留在 app/ 之外（vite 会清空 outDir）
 
 # 内置氛围渐变壁纸（CSS background 值，无需文件）
 BUILTIN_WALLPAPERS = {

@@ -1,0 +1,27 @@
+{
+  "name": "learning-hub-web",
+  "private": true,
+  "version": "5.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "build:fast": "vite build",
+    "preview": "vite preview",
+    "test:qbank": "node test-qbank-store.mjs",
+    "test:qbank:ui": "node test-qbank-ui.mjs",
+    "test:stores": "node test-hub-store.mjs && node test-desk-store.mjs && node test-qbank-store.mjs"
+  },
+  "dependencies": {
+    "element-plus": "^2.14.7",
+    "vue": "^3.5.13",
+    "vue-router": "^4.6.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "puppeteer-core": "^23.11.1",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.7",
+    "vue-tsc": "^2.2.0"
+  }
+}

@@ -1,0 +1,60 @@
+plugins {
+    id 'com.android.application'
+}
+
+// 签名凭证：keystore.properties 在 androd-app 根（本工程在 legacy/ 下，深度多一层）
+def ksProps = new Properties()
+def ksPropsFile = rootProject.file('../../keystore.properties')
+if (ksPropsFile.exists()) {
+    ksPropsFile.withInputStream { ksProps.load(it) }
+}
+
+android {
+    namespace 'com.xinghui.learninghub'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.xinghui.mechqbank"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "1.0.0"
+    }
+
+    signingConfigs {
+        release {
+            // 凭证来自 androd-app/keystore.properties（不进仓库）；storeFile 只取文件名，
+            // 统一解析到 androd-app/keystore/ 下，避免各工程层级不同导致相对路径错位
+            if (ksProps['storeFile']) {
+                storeFile rootProject.file('../../keystore/' + new File(ksProps['storeFile']).name)
+                storePassword ksProps['storePassword']
+                keyAlias ksProps['keyAlias']
+                keyPassword ksProps['keyPassword']
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (ksProps['storeFile']) signingConfig signingConfigs.release
+        }
+        debug {
+            if (ksProps['storeFile']) signingConfig signingConfigs.release
+        }
+    }
+
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+}

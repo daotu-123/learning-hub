@@ -1,0 +1,10 @@
+# Learning Hub 服务端依赖
+# 安装：python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
+
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+pydantic==2.13.5
+
+# 测试（pytest + FastAPI TestClient 依赖 httpx）
+pytest==9.1.1
+httpx==0.28.1

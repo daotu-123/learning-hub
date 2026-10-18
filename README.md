@@ -1,6 +1,6 @@
 # 学习中枢 Learning Hub
 
-一套跑在家里的个人学习系统：一台电脑做服务端，三个安卓 App 各管一摊，手机与电脑随时随地同步。
+一套跑在家里的个人学习系统：一台电脑做服务端，**一个安卓 App 内含三 Tab**（学习中枢 / 题库 / 工作台），手机与电脑随时随地同步。
 
 写日记、打任务卡、按艾宾浩斯曲线复习、番茄钟专注、刷机械专业题、让 AI 生成课堂——数据都在自己电脑上，不上云。
 
@@ -9,31 +9,33 @@
 ## 组成
 
 ```
-┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-│  学习中枢 App │   │  机械题库 App │   │   工作台 App  │
-│ com.xinghui  │   │ com.xinghui  │   │ com.xinghui  │
-│ .learninghub │   │ .mechqbank   │   │ .workbench   │
-└──────┬───────┘   └──────┬───────┘   └──────┬───────┘
-       └──────────────────┼──────────────────┘
-                          │ HTTP（局域网 / Tailscale 虚拟组网）
-                 ┌────────▼─────────┐
-                 │  FastAPI 服务 :8637 │
-                 │  server/           │
-                 └────────┬─────────┘
-                          │
-      ┌───────────────────┼────────────────────┐
-      ▼                   ▼                    ▼
- Obsidian 日记      复习/积分账本         本地 SQLite
- （Markdown）       （JSON 账本）        （番茄钟等）
+┌───────────────────────────────────────────────┐
+│             学习中枢 App（单 APK 三 Tab）        │
+│  com.xinghui.learninghub                      │
+│  学习中枢 │ 题库 │ 工作台                        │
+│  WebView(WebViewAssetLoader) + 原生桥 Native    │
+└──────────────────┬────────────────────────────┘
+                   │ HTTP（局域网 / Tailscale 虚拟组网）
+          ┌────────▼─────────┐
+          │  FastAPI 服务 :8637 │
+          │  server/           │
+          └────────┬─────────┘
+                   │
+   ┌───────────────┼────────────────────┐
+   ▼               ▼                    ▼
+Obsidian 日记   复习/积分账本         本地 SQLite
+（Markdown）    （JSON 账本）        （番茄钟等）
 ```
+
+同一份网页产物双端复用：Web 走 FastAPI 的 `/app/` 静态托管，APK 走 `assets/www`。
 
 | 部分 | 说明 |
 |---|---|
-| `server/` | FastAPI 服务端：学习中枢 API、工作台 API、AI 课堂 |
-| `hub-app/` | 学习中枢 App（WebView 套壳，页面在 `server/web_dist`） |
-| `qbank-app/` | 机械题库 App（题库数据由外部脚本生成） |
-| `app/` | 工作台 App（原生界面为主） |
+| `server/` | FastAPI 服务端：三端 API + AI 课堂 + 网页热更新清单 |
+| `web/` | 前端工程（Vue 3 + Vite + TS），三 Tab 单页应用，产物在 `server/web_dist/app` |
+| `android/` | 安卓工程（单 APK，WebViewAssetLoader 加载网页 + 原生桥） |
 | `apk/` | 构建产物（不入库，见 Releases） |
+| `legacy/` | 历史三 App 工程（`app/`、`qbank-app/`），仅作存档 |
 
 ## 功能
 
@@ -50,28 +52,34 @@
 
 ```bash
 cd server
-python -m venv .venv && .venv/Scripts/pip install fastapi uvicorn
+python -m venv .venv
+.venv/Scripts/pip install -r requirements.txt
 .venv/Scripts/python main.py        # 监听 0.0.0.0:8637
+
+# 回归测试（writer 写入口：打勾 / 计划 / 复习推进 / 备份）
+.venv/Scripts/python -m pytest
 ```
 
-打包成单文件 exe：
+打包成单文件 exe（配置在 `server/LearningHub.spec`，已含 `hub_web` + `web_dist`）：
 
 ```bat
 cd server
-.venv\Scripts\python.exe -m PyInstaller --onefile --windowed --noconfirm ^
-  --name LearningHub --icon ..\exe\learninghub_icon.ico ^
-  --add-data "hub_web;hub_web" --add-data "web_dist;web_dist" main.py
+.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean LearningHub.spec
+copy /y dist\LearningHub.exe ..\exe\学习中枢服务.exe
 ```
 
 ### 2. 手机 App
 
 ```bat
-build_hub_apk.bat      :: 学习中枢
-build_qbank_apk.bat    :: 机械题库
-build_apk.bat          :: 工作台
+build_apk.bat              :: 完整构建：npm run build → 同步 assets → 版本号 +1 → 出签名 APK
+build_apk.bat -skip-web    :: 只重打 APK（复用已有 web 产物）
 ```
 
 需要 JDK 17 与 Android SDK（放到 `build-tools\`，构建脚本已写死相对路径）。
+产物：`apk\学习中枢.apk`（`com.xinghui.learninghub`）。
+
+手机端首次打开后填服务器地址（或等 UDP 自动发现），之后连上服务即可热更新网页：
+`server/web_dist/VERSION` 比 App 内版本高时，App 会自动拉取新页面并重载。
 
 ### 3. 连接
 
@@ -97,7 +105,7 @@ cp keystore.properties.example keystore.properties
 
 ## 技术栈
 
-FastAPI · Uvicorn · PyInstaller · 原生 Android（WebView + Java）· Gradle 8.7 · SQLite · Obsidian Markdown
+FastAPI · Uvicorn · PyInstaller · Vue 3 + Vite + TypeScript · 原生 Android（WebView + Java）· Gradle 8.7 · SQLite · Obsidian Markdown
 
 ## 文档
 
