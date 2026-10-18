@@ -7,6 +7,7 @@ FastAPI 路由：/api/hub/*
 """
 import base64
 import datetime
+import hashlib
 import json
 import re
 import sqlite3
@@ -371,19 +372,28 @@ def _web_version() -> int:
 
 
 def _web_files() -> list:
-    """web_dist 下全部网页文件（相对路径）"""
+    """web_dist 下全部网页文件：返回 [{name, sha256}]。
+
+    2026-10-18：热更新通道原先是「明文 HTTP + 无任何校验」——同网段改一份 JS
+    就能写入 App 并拿到 window.Native 的全部原生能力。现在清单里带每文件
+    sha256，客户端校验不通过就拒绝写入并回退内置资源。
+    """
     if not WEB_DIST.exists():
         return []
     out = []
     for p in sorted(WEB_DIST.rglob("*")):
         if p.is_file() and p.name != "VERSION":
-            out.append(p.relative_to(WEB_DIST).as_posix())
+            try:
+                digest = hashlib.sha256(p.read_bytes()).hexdigest()
+            except OSError:
+                continue
+            out.append({"name": p.relative_to(WEB_DIST).as_posix(), "sha256": digest})
     return out
 
 
 @router.get("/webversion")
 def hub_webversion():
-    """网页版本 + 文件清单（App 启动时比对，有新版则逐文件拉取热更新）"""
+    """网页版本 + 文件清单（含 sha256；App 启动时比对，有新版则逐文件拉取热更新）"""
     return {"version": _web_version(), "files": _web_files()}
 
 
