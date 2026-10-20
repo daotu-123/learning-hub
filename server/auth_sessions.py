@@ -68,12 +68,15 @@ SLIDING_TTL_SECONDS = 7 * 24 * 3600     # 滑动 TTL：闲置 7 天即失效
 ABSOLUTE_TTL_SECONDS = 30 * 24 * 3600   # 绝对上限：创建后 30 天必失效
 SESSION_TOUCH_INTERVAL = 5 * 60     # last_seen_at 的更新粒度，避免每个请求都写盘
 
-# legacy 401 响应体。**与 M1a 之前逐字节一致**，改一个字前端就可能退化。
-# 抽成常量是为了 main.py 的鉴权中间件与 routers/auth.py 的会话校验共用同一份，
-# 从根上杜绝"两边写法不同 → 字节不一致"。
+# legacy 401 响应体。抽成常量是为了 main.py 的鉴权中间件与 routers/auth.py 的
+# 会话校验共用同一份，从根上杜绝"两边写法不同 → 字节不一致"。
+#
+# M2b 唯一一次**主动**改动 hint 文案（owner 授权）：登录页上线后，
+# 只提 X-Token 会让人以为 Bearer 不可用。error 字段与整体结构未动，
+# 前端只读 error，不解析 hint。
 UNAUTHORIZED_BODY = {
     "error": "unauthorized",
-    "hint": "非本机访问需带 X-Token 请求头（或在设置页录入令牌）",
+    "hint": "非本机访问需带 Authorization: Bearer 会话令牌（或 X-Token 旧令牌）请求头",
 }
 
 # 没有账号时给用户的指引。503 响应与启动日志用**同一句**。

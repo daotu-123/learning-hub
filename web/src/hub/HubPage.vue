@@ -133,6 +133,20 @@
           <p class="hint">{{ aiKeyHint }}</p>
         </div>
 
+        <div class="set-group">
+          <label>账号</label>
+          <input type="password" class="text-input" v-model="oldPwd" placeholder="原口令" autocomplete="current-password">
+          <input type="password" class="text-input" v-model="newPwd" placeholder="新口令（至少 12 位）" autocomplete="new-password" style="margin-top:8px">
+          <input type="password" class="text-input" v-model="confirmPwd" placeholder="再输一遍新口令" autocomplete="new-password" style="margin-top:8px">
+          <div class="modal-actions" style="margin-top:10px;justify-content:flex-start">
+            <button class="btn btn-ghost" :disabled="pwdBusy" @click="onChangePassword">{{ pwdBusy ? '提交中…' : '修改口令' }}</button>
+          </div>
+          <p class="hint">{{ pwdMsg || '改口令会让其他设备全部下线。' }}</p>
+          <div class="modal-actions" style="margin-top:12px;justify-content:flex-start">
+            <button class="btn btn-ghost" @click="onLogout">退出登录</button>
+          </div>
+        </div>
+
         <div class="modal-actions">
           <button class="btn btn-ghost" @click="settingsOpen = false">取消</button>
           <button class="btn btn-primary" @click="onSave">保存</button>
@@ -146,7 +160,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import TodayView from './TodayView.vue'
 import PlansView from './PlansView.vue'
 import ReviewView from './ReviewView.vue'
@@ -159,15 +173,17 @@ import {
   setScene, showHubView, initHub, goBackApp, clearErr,
   openSettings, saveSettings, uploadWallpaper,
   setSettingWallpaper, setSettingAccent, setSettingGlass,
-  saveAiKey, showErr,
+  saveAiKey, showErr, showToast,
   ACCENT_PRESETS, WP_GRADIENTS,
 } from './hubStore'
-import { IS_APP, getServer, setServer as saveServerAddr } from '@/api/server'
+import { IS_APP, getServer, setServer as saveServerAddr, api } from '@/api/server'
+import { clearSession, saveSession } from '@/auth/session'
 import './hub.css'
 
 defineOptions({ name: 'HubPage' })
 
 const route = useRoute()
+const router = useRouter()
 
 const SCENE_LABELS: Record<string, string> = { rain: '雨林', snow: '雪日', cloud: '暖云' }
 const sceneKeys = Object.keys(SCENE_LABELS)
@@ -269,6 +285,50 @@ async function onAiKeySave() {
     aiKeyInput.value = ''
     aiKeyHint.value = c.configured ? '已保存，AI 助手就绪' : '已清除 Key'
   } catch (err: any) { showErr('保存失败：' + err.message) }
+}
+
+/* ---------------- 账号（M2b）：登出 / 改口令 ---------------- */
+const oldPwd = ref('')
+const newPwd = ref('')
+const confirmPwd = ref('')
+const pwdBusy = ref(false)
+const pwdMsg = ref('')
+
+async function onLogout() {
+  try {
+    await api('/api/auth/logout', { method: 'POST' })
+  } catch (e) {
+    // 服务端不可达也要能登出：本地清干净比"留着等下次成功"更重要
+  }
+  clearSession()
+  settingsOpen.value = false
+  router.replace('/login')
+}
+
+async function onChangePassword() {
+  pwdMsg.value = ''
+  if (newPwd.value.length < 12) { pwdMsg.value = '新口令至少 12 位'; return }
+  if (newPwd.value !== confirmPwd.value) { pwdMsg.value = '两次输入的新口令不一致'; return }
+  pwdBusy.value = true
+  try {
+    const r = await api<{ token: string }>('/api/auth/password', {
+      method: 'PUT',
+      body: JSON.stringify({ old_password: oldPwd.value, new_password: newPwd.value }),
+    })
+    // 改口令会撤销全部旧会话，响应里带回来的新会话**必须立刻换上**，
+    // 否则自己把自己踢下线。
+    if (!r || !r.token) throw new Error('响应缺少新令牌')
+    saveSession(r.token)
+    oldPwd.value = ''; newPwd.value = ''; confirmPwd.value = ''
+    pwdMsg.value = '已修改，其他设备已下线'
+    showToast('口令已更新 ✓')
+  } catch (err: any) {
+    if (err && err.status === 401) pwdMsg.value = '原口令不正确'
+    else if (err && err.status === 400) pwdMsg.value = err.message
+    else pwdMsg.value = '修改失败：' + (err && err.message)
+  } finally {
+    pwdBusy.value = false
+  }
 }
 
 /* ---------------- 生命周期 ---------------- */

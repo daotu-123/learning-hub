@@ -19,9 +19,10 @@ import auth_sessions
 from auth_sessions import MIN_PASSWORD_LENGTH, NO_ACCOUNT_MESSAGE, UNAUTHORIZED_BODY
 from conftest import LAN, LOOP, TEST_TOKEN, leaks
 
-# 改码前的 legacy 401 响应体，逐字节照抄。改一个字前端就可能退化。
+# M2b 起更新的 401 响应体，逐字节照抄。
+# 这是 owner 授权的唯一一次响应字节变化（只改 hint 文案，error 与结构未动）。
 LEGACY_401_TEXT = (
-    '{"error":"unauthorized","hint":"非本机访问需带 X-Token 请求头（或在设置页录入令牌）"}'
+    '{"error":"unauthorized","hint":"非本机访问需带 Authorization: Bearer 会话令牌（或 X-Token 旧令牌）请求头"}'
 )
 
 # 测试夹具用的假口令/假令牌。不是任何真实凭据。

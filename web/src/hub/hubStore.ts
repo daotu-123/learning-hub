@@ -2,7 +2,8 @@
    学习中枢状态层（TS 重写，替代原 hub.html 内联脚本）
    ============================================================ */
 import { reactive, readonly, ref } from 'vue'
-import { api, IS_APP, setServer as saveServerAddr, getServer, getToken } from '@/api/server'
+import { api, IS_APP, setServer as saveServerAddr, getServer } from '@/api/server'
+import { authHeaders, handleUnauthorized } from '@/auth/session'
 
 /* ---------------- 基础 ---------------- */
 export function localDate(d: Date): string {
@@ -69,18 +70,22 @@ function apiBase(): string {
   return getServer() + '/api/hub'
 }
 
-/** 带令牌的请求头。服务端对非回环请求要求 X-Token。 */
+/** 带凭据的请求头（M2b 唯一出口：有会话走 Bearer，回落旧令牌走 X-Token）。 */
 function hubHeaders(extra?: Record<string, string>): Record<string, string> {
-  const h: Record<string, string> = { 'Content-Type': 'application/json' }
-  const tok = getToken()
-  if (tok) h['X-Token'] = tok
-  return Object.assign(h, extra || {})
+  return authHeaders(Object.assign({ 'Content-Type': 'application/json' }, extra || {}))
 }
 
-async function apiHub<T = any>(path: string, opts: RequestInit = {}): Promise<T> {
+/** hub 请求的统一出口：注入凭据 + 401 交由 session 层处理。 */
+async function hubFetch(path: string, opts: RequestInit = {}): Promise<Response> {
   const r = await fetch(apiBase() + path, Object.assign({}, opts, {
     headers: hubHeaders((opts as any).headers),
   }))
+  if (r.status === 401) handleUnauthorized()
+  return r
+}
+
+async function apiHub<T = any>(path: string, opts: RequestInit = {}): Promise<T> {
+  const r = await hubFetch(path, opts)
   if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200))
   return r.json()
 }
@@ -110,6 +115,33 @@ export function setScene(scene: string, persist = true) {
 const sloganText = ref(SLOGANS.rain)
 export const slogan = readonly(sloganText)
 
+/* 自定义壁纸的 blob URL（M2b-F）。
+   会话令牌绝不许进 URL，而 <img>/background-image 又没法设请求头，
+   所以只能 fetch 拿到字节再 createObjectURL。
+   绝不为此去放宽后端"会话令牌可走 query"的豁免——那是拿令牌卫生换一张背景图。 */
+const wallpaperBlobUrl = ref('')
+export const customWallpaperUrl = readonly(wallpaperBlobUrl)
+let wallpaperRevokeUrl = ''
+/** blob URL 对应的服务端路径。换壁纸时用它判断缓存是否还作数。 */
+let wallpaperBlobPath = ''
+
+async function loadWallpaperBlob(path: string): Promise<string> {
+  const url = getServer() + path
+  try {
+    const r = await fetch(url, { headers: authHeaders(), cache: 'no-store' })
+    if (r.status === 401) { handleUnauthorized(); return '' }
+    if (!r.ok) return ''
+    const blob = await r.blob()
+    const obj = URL.createObjectURL(blob)
+    if (wallpaperRevokeUrl) { try { URL.revokeObjectURL(wallpaperRevokeUrl) } catch (e) { /* noop */ } }
+    wallpaperRevokeUrl = obj
+    wallpaperBlobPath = path
+    return obj
+  } catch (e) {
+    return ''
+  }
+}
+
 function applyWallpaper() {
   const s = state.settings || {}
   const wp = s.wallpaper || 'rain'
@@ -121,6 +153,22 @@ function applyWallpaper() {
   } else if (WP_GRADIENTS[wp]) {
     layer.style.backgroundImage = WP_GRADIENTS[wp]
     layer.style.opacity = '0.85'
+    wallpaperBlobUrl.value = ''
+  } else if (/^\/api\/hub\/wallpapers\//.test(wp)) {
+    // 自定义壁纸：走 blob，别把令牌拼进 URL
+    const cached = wallpaperBlobUrl.value
+    if (cached && wallpaperBlobPath === wp) {
+      layer.style.backgroundImage = 'url(' + JSON.stringify(cached) + ')'
+      layer.style.opacity = '1'
+    } else {
+      layer.style.opacity = '0'
+      loadWallpaperBlob(wp).then((obj) => {
+        if (!obj) return
+        wallpaperBlobUrl.value = obj
+        // 期间用户可能已经切到别的壁纸了，别覆盖新选择
+        if (((state.settings || {}).wallpaper || '') === wp) applyWallpaper()
+      })
+    }
   } else {
     layer.style.backgroundImage = 'url(' + JSON.stringify(wp) + ')'
     layer.style.opacity = '1'
@@ -158,8 +206,8 @@ export async function saveSettings(sloganInput: string) {
     glass: state.settings.glass,
     slogan: sloganInput,
   }
-  const r = await fetch(apiBase() + '/settings', {
-    method: 'PUT', headers: hubHeaders(), body: JSON.stringify(body),
+  const r = await hubFetch('/settings', {
+    method: 'PUT', body: JSON.stringify(body),
   })
   if (!r.ok) throw new Error(await r.text())
   state.settings = await r.json()
@@ -172,9 +220,8 @@ export async function uploadWallpaper(file: File) {
   const reader = new FileReader()
   reader.onload = async () => {
     try {
-      const r = await fetch(apiBase() + '/wallpaper', {
+      const r = await hubFetch('/wallpaper', {
         method: 'POST',
-        headers: hubHeaders(),
         body: JSON.stringify({ data: reader.result }),
       })
       if (!r.ok) throw new Error(await r.text())
@@ -190,9 +237,8 @@ export function setSettingWallpaper(wp: string) { state.settings.wallpaper = wp;
 export function setSettingAccent(accent: string) { state.settings.accent = accent; applyAccent() }
 export function setSettingGlass(g: number) { state.settings.glass = g; applyGlass() }
 export async function saveAiKey(key: string) {
-  const r = await fetch(apiBase() + '/aiconfig', {
-    method: 'PUT', headers: hubHeaders(),
-    body: JSON.stringify({ key: key.trim() }),
+  const r = await hubFetch('/aiconfig', {
+    method: 'PUT', body: JSON.stringify({ key: key.trim() }),
   })
   if (!r.ok) throw new Error((await r.json()).detail || ('HTTP ' + r.status))
   const c = await r.json()
@@ -236,7 +282,11 @@ export async function loadToday() {
     state.tasks = []
   } else {
     let txt: any = { content: '' }
-    try { txt = await (await fetch(getServer() + '/api/diary?date=' + state.date, { headers: hubHeaders() })).json() } catch (e) { /* noop */ }
+    try {
+      const dr = await fetch(getServer() + '/api/diary?date=' + state.date, { headers: hubHeaders() })
+      if (dr.status === 401) handleUnauthorized()
+      txt = await dr.json()
+    } catch (e) { /* noop */ }
     state.tasks = parseTasks(txt.content || '')
   }
   return t
@@ -418,9 +468,8 @@ function pomoResumeFromStorage() {
   const remain = Math.round((saved.endAt - Date.now()) / 1000)
   if (remain <= 0) {
     localStorage.removeItem('hub-pomo')
-    fetch(apiBase() + '/focus', {
+    hubFetch('/focus', {
       method: 'POST',
-      headers: hubHeaders(),
       body: JSON.stringify({ task: saved.task || '', minutes: saved.minutes || 25 }),
     }).then(() => showToast('上次的番茄已自动补记 ✓')).catch(() => { })
     return
@@ -445,9 +494,8 @@ async function pomoComplete() {
   const ta = document.getElementById('pomoTask') as HTMLInputElement | null
   const task = ta ? ta.value.trim() : ''
   try {
-    await fetch(apiBase() + '/focus', {
+    await hubFetch('/focus', {
       method: 'POST',
-      headers: hubHeaders(),
       body: JSON.stringify({ task: task, minutes: mins }),
     })
     showToast('专注完成 +' + mins + ' 分钟 ✓')
@@ -561,9 +609,8 @@ export async function loadLibrary() {
 
 /* ---------------- AI 课堂（OpenMAIC） ---------------- */
 async function apiSend(path: string, method: string, body?: any) {
-  const r = await fetch(apiBase() + path, {
+  const r = await hubFetch(path, {
     method,
-    headers: hubHeaders(),
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   if (!r.ok) {

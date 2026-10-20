@@ -149,7 +149,31 @@ cd server
 会话令牌失效（过期 / 撤销 / 伪造）与"没带令牌"返回**完全相同**的 401 响应体，不泄露原因。
 
 > 旧共享令牌与 `WORKBENCH_AUTH_TOKEN` 环境变量属于过渡期设施，等新版 APK 铺开后移除。
-> 前端登录页是下一轮的事；本轮**前端一行没动**，仍全部走旧路径。
+
+### 前端登录（M2b 起）
+
+- 路由 `/login`（懒加载）。未登录访问任何页面都会被守卫送到 `/login?next=<原路径>`，
+  登录成功自动跳回；`next` 只接受站内相对路径（拒绝绝对 URL 与 `//host`）。
+- 失败提示统一为「用户名或口令错误」，前端**不再**自行区分原因。
+- 会话令牌存 `hub_session`（key 与后端约定一致）：APK 走 `Native.savePref/loadPref`，
+  浏览器走 `localStorage`，登出与 401 **同时清两边**。
+- 请求注入只有一个出口 `web/src/auth/session.ts::authHeaders()`：
+  有会话用 `Authorization: Bearer <session>`，无会话但有旧令牌才回落 `X-Token`。
+  **令牌永远不进 URL**（壁纸等受保护图片改为 fetch + Blob）。
+- 任何 API 返回 401 → 清会话并跳 `/login?next=<当前路由>`；登录页自身的 401 不跳。
+- 设置面板里有「修改口令」与「退出登录」。改口令后会用响应里返回的**新会话**替换本地令牌，
+  并提示其他设备已下线。
+
+```bash
+cd web
+npm run build                 # 前端构建（产物落在 server/web_dist/app）
+npm run test:auth             # 身份链路验收：login → me(200) → logout(200) → me(401)
+```
+
+`npm run test:auth` 默认打 `http://127.0.0.1:8637`，可用 `HUB_BASE` 换地址，
+凭据用 `HUB_ACCOUNT` / `HUB_PASSWORD` 指定。服务端还没建账号时该项会标「跳过」而不是失败。
+
+> `/photos/*` 与 `/img/*` 目前仍走旧的 query 令牌，属于下一轮范围，本轮未改。
 
 ## 配置（环境变量）
 

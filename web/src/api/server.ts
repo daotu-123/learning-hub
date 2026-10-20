@@ -4,6 +4,8 @@
    - api() 统一请求（8s 超时）
    - discover() UDP 自动发现 PC（App 内）
    ============================================================ */
+import { authHeaders, handleUnauthorized } from '@/auth/session'
+
 const KEY = 'hub_server'
 const TOKEN_KEY = 'hub_token'
 export const IS_APP: boolean = typeof window !== 'undefined' && typeof window.Native !== 'undefined'
@@ -23,9 +25,11 @@ export function setServer(v: string): string {
 }
 
 /**
- * 访问令牌：服务端对「非回环」请求要求 X-Token，用于防止同网段任意设备
- * 读取日记/健康/照片或改写 AI Key。桌面端本机访问免令牌；手机首次连接时
- * 需在电脑浏览器打开 /api/auth/token 取一次令牌，填进 App 设置页。
+ * 访问令牌（M2b 起这里是**旧共享令牌**的读取口，新登录走 auth/session.ts）：
+ * 服务端对「非回环」请求要求凭据。旧共享令牌用 X-Token 头，新会话用
+ * Authorization: Bearer。请求注入统一走 authHeaders()，别再手写 X-Token。
+ * 桌面端本机访问免令牌；手机首次连接时需在电脑浏览器打开 /api/auth/token
+ * 取一次令牌，填进 App 设置页（过渡期仍然有效）。
  */
 export function getToken(): string {
   let v = ''
@@ -60,16 +64,15 @@ async function rawFetch<T>(url: string, opts: RequestInit): Promise<T> {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), 8000)
   try {
-    // 合并请求头：默认 Content-Type + 令牌，再叠加调用方传入的头
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    const tok = getToken()
-    if (tok) headers['X-Token'] = tok
+    // 合并请求头：默认 Content-Type + 令牌（有会话用 Bearer，回落旧令牌用 X-Token），再叠加调用方传入的头
+    const headers: Record<string, string> = authHeaders({ 'Content-Type': 'application/json' })
     const merged = Object.assign({}, opts, {
       headers: Object.assign(headers, (opts as any).headers || {}),
       signal: ctrl.signal,
     })
     const res = await fetch(url, merged)
     const data = await res.json().catch(() => ({}))
+    if (res.status === 401) handleUnauthorized()
     if (!res.ok) {
       const err: ApiError = new Error(
         (data as any).detail

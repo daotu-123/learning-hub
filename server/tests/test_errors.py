@@ -46,7 +46,7 @@ def test_unknown_api_path_still_401(lan):
     body = r.json()
     assert body == {
         "error": "unauthorized",
-        "hint": "非本机访问需带 X-Token 请求头（或在设置页录入令牌）",
+        "hint": "非本机访问需带 Authorization: Bearer 会话令牌（或 X-Token 旧令牌）请求头",
     }
 
 

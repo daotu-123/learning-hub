@@ -1,0 +1,91 @@
+/* 登录页样式：复用现有深绿主题变量，不引 UI 库。
+   触控目标统一 ≥44px；375px 宽度下无横向滚动。 */
+.login {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(24px + var(--safe-top)) 16px calc(24px + var(--safe-bottom));
+  background: linear-gradient(160deg, #0c1f19 0%, #12331f 45%, #0a1f16 100%);
+  overflow-x: hidden;
+}
+.login .card {
+  width: 100%;
+  max-width: 360px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  padding: 26px 22px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.login h1 {
+  font-size: 20px;
+  font-weight: 600;
+  color: #eaf3ee;
+  margin-bottom: 6px;
+}
+.login .sub {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: rgba(234, 243, 238, 0.6);
+  margin-bottom: 22px;
+}
+.login .field {
+  display: block;
+  margin-bottom: 16px;
+}
+.login .field > span {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: rgba(234, 243, 238, 0.7);
+  margin-bottom: 8px;
+}
+.login .text-input {
+  width: 100%;
+  /* 16px 是 iOS Safari 不自动缩放页面的下限，375px 宽度下必须够宽 */
+  font-size: 16px;
+  min-height: 46px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  color: #eaf3ee;
+  padding: 11px 13px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.login .text-input:focus {
+  border-color: #d7ef83;
+}
+.login .err {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #ff9b9b;
+  margin-bottom: 12px;
+  word-break: break-word;
+}
+.login .btn-primary {
+  width: 100%;
+  min-height: 46px;
+  border: none;
+  border-radius: 10px;
+  background: #d7ef83;
+  color: #051612;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.2s;
+}
+.login .btn-primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.login .btn-primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+@media (max-width: 400px) {
+  .login { padding-left: 14px; padding-right: 14px; }
+  .login .card { padding: 22px 18px; }
+}

@@ -7,7 +7,7 @@
         </keep-alive>
       </router-view>
     </div>
-    <nav class="shell-nav">
+    <nav class="shell-nav" v-if="!isLogin">
       <button
         v-for="t in tabs"
         :key="t.key"
@@ -49,6 +49,8 @@ const tabs = [
 ]
 
 const activeTab = computed(() => (route.meta.tab as string) || 'hub')
+/* 登录页没有底部导航（也没有 hub 主题） */
+const isLogin = computed(() => route.path === '/login')
 
 /* APK 内：连上服务端时比对网页版本，有新版则热更新并重载（Web 端为空操作） */
 onMounted(() => { checkWebUpdate() })
