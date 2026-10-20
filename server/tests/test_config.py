@@ -145,11 +145,24 @@ def test_hermes_dir_single_source():
 
 
 def test_deeptutor_paths_derive_from_config():
-    import config
-    import main
+    """DeepTutor 的 db/log 路径必须由 config.HUB_DEEPTUTOR_DIR 派生。
 
-    assert main.DEEPTUTOR_DB == config.DEEPTUTOR_DIR / "chat_history.db"
-    assert main.DEEPTUTOR_LOG == config.DEEPTUTOR_DIR / "logs" / "deeptutor.jsonl"
+    2026-10-20 起这两个常量随 docs 域搬到了 routers/docs.py，main.py 不再持有；
+    这里改为验证最终落点，防止有人又写死一份路径。
+    """
+    import config
+    from routers import docs
+
+    assert docs.DEEPTUTOR_DB == config.DEEPTUTOR_DIR / "chat_history.db"
+    assert docs.DEEPTUTOR_LOG == config.DEEPTUTOR_DIR / "logs" / "deeptutor.jsonl"
+
+
+def test_diary_root_derives_from_vault():
+    """日记根目录由 vault 派生（原 main.py 的 DIARY_ROOT，现归 docs 域）。"""
+    import config
+    from routers import docs
+
+    assert docs.DIARY_ROOT == config.OBSIDIAN_VAULT / "日记"
 
 
 def test_udp_port_from_config():
