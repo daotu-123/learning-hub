@@ -689,6 +689,9 @@ app.include_router(health_router)
 from errors import register as register_error_handlers
 register_error_handlers(app)
 
+# 日志配置（M1a-D）：access 日志的 token/sig 落盘前打码
+from logging_setup import build_log_config
+
 # Learning Hub: OpenMAIC AI 课堂（/api/hub/openmaic/*）
 from hub.openmaic import router as openmaic_router
 app.include_router(openmaic_router)
@@ -1403,24 +1406,10 @@ if __name__ == "__main__":
     import platform
     start_udp_broadcast(SERVER_PORT, platform.node() or "PC")
     # 文件日志 (后台静默启动时无控制台, 排障依赖 server.log)
+    # M1a-D：query 里的 token/sig 在落盘前打码（见 logging_setup 的说明）
     LOG_FILE = DATA_DIR / "server.log"
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    LOG_CONFIG = {
-        "version": 1,
-        "disable_existing_loggers": False,
-        "formatters": {"f": {"format": "%(asctime)s %(levelname)s %(message)s"}},
-        "handlers": {
-            "h": {
-                "class": "logging.handlers.RotatingFileHandler",
-                "filename": str(LOG_FILE),
-                "maxBytes": 2 * 1024 * 1024,
-                "backupCount": 2,
-                "encoding": "utf-8",
-                "formatter": "f",
-            }
-        },
-        "root": {"level": "INFO", "handlers": ["h"]},
-    }
+    LOG_CONFIG = build_log_config(LOG_FILE)
     print("=" * 56)
     print("  工作台同步服务器 v1.0.0")
     print(f"  本机 IP: {LAN_IP}   端口: {SERVER_PORT}")
