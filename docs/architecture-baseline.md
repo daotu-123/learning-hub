@@ -6,6 +6,10 @@
 >
 > **决策另见**：[`docs/gate0-decisions.md`](gate0-decisions.md)
 > （2026-10-20 owner 定案：代码组织/部署/身份三维度、产品边界、题库服务化、授权边界）。
+>
+> **已脱敏**：本文件进公开仓库前做了路径脱敏，`<REPO>` / `<VAULT>` / `<CLASS_VAULT>` /
+> `<HERMES_SCRIPTS>` / `<DEEPTUTOR_DATA>` 是占位符；实际值由各自环境变量与本机配置提供
+> （M1 起统一走 `HUB_VAULT` 等配置项，不再硬编码）。
 
 ---
 
@@ -46,7 +50,7 @@
                         │  hub/writer.py        唯一写入口（备份+原子替换）│
                         └──────────────────────────────────────────────┘
                                      │                    │
-                        E:\…\server\data\          E:\soft_files\obsidian-files\…
+                        <REPO>\server\data          <VAULT>
                         （settings/plans/…）        （日记、DeepTutor、收藏）
 ```
 
@@ -136,7 +140,7 @@
 
 ## 3. 数据落盘位置
 
-### 3.1 `server/data/`（`E:\agent\androd-app\server\data\`，gitignore）
+### 3.1 `server/data/`（`<REPO>\server\data\`，gitignore）
 
 | 路径 | 内容 | 写入方 |
 |---|---|---|
@@ -152,15 +156,15 @@
 
 ### 3.2 Obsidian vault
 
-- 主 vault：`E:\soft_files\obsidian-files\self-improve\self-improve`
+- 主 vault：`<VAULT>`
   - `日记/`（每日日记、checkbox 任务、复习标记）、`DeepTutor/`（每日反馈/文章/周记/月记）、`TaskNotes/Tasks/`、`工作台日报/`、`工作台照片/`、`deeptutor/`
-- 收藏库 vault：`E:\soft_files\obsidian-files\depot\class`（抖音收藏、小红书收藏）
+- 收藏库 vault：`<CLASS_VAULT>`（抖音收藏、小红书收藏）
 - 前端还有 3 处 `obsidian://open?vault=self-improve…` 深链（`hubStore.ts`、`FeedbackView.vue`、`TodayView.vue`）
 
 ### 3.3 外部账本
 
-- `E:\soft_files\tools\hermes-scripts\*.json`：`review_queue.json`（艾宾浩斯）、`score_state.json`、`formula_rotation.json`、`skip_dates.json` —— 只读
-- `D:\record\deeptutor\data\user\`：`chat_history.db`、`logs\deeptutor.jsonl` —— 只读
+- `<HERMES_SCRIPTS>\*.json`：`review_queue.json`（艾宾浩斯）、`score_state.json`、`formula_rotation.json`、`skip_dates.json` —— 只读
+- `<DEEPTUTOR_DATA>\`：`chat_history.db`、`logs\deeptutor.jsonl` —— 只读
 
 ### 3.4 `server/web_dist/`
 
@@ -361,11 +365,11 @@ web_dist/app/assets/vue-qbPTJ1M_.js
 
 | # | 位置 | 值 |
 |---|---|---|
-| 1 | `server/main.py:37` | `OBSIDIAN_VAULT = E:\soft_files\obsidian-files\self-improve\self-improve` |
+| 1 | `server/main.py:37` | `OBSIDIAN_VAULT = <VAULT>` |
 | 2 | `server/hub/vault_reader.py:16` | 同上（**重复定义，未共享常量**） |
 | 3 | `server/hub/openmaic.py:42` | `DEFAULT_CFG["roots"][0]` 同上 |
-| 4 | `server/main.py:39` | `XHS_DIR = E:\soft_files\obsidian-files\depot\class\小红书收藏` |
-| 5 | `server/hub/vault_reader.py:19` | `CLASS_DIR = E:\soft_files\obsidian-files\depot\class` |
+| 4 | `server/main.py:39` | `XHS_DIR = <CLASS_VAULT>\小红书收藏` |
+| 5 | `server/hub/vault_reader.py:19` | `CLASS_DIR = <CLASS_VAULT>` |
 
 派生子目录引用（非硬编码，但都从上面 5 个常量展开）：`main.py:38,40,750,1116,1120,1284…`、`vault_reader.py:17-18` 等。
 
