@@ -109,6 +109,48 @@ GET /api/v1/hub/today ≡ GET /api/hub/today
   再由 Starlette 的 `redirect_slashes` 307 到 `/api/tasks`——重定向目标不带 `v1`。
   功能上不受影响（旧路径就是别名），因此没有去改写 `Location` 响应头。
 
+## 身份与登录
+
+单账号 + 口令（**Argon2id** 存哈希），另有一套**服务端会话令牌**。两套凭据**并行**：
+
+| 凭据 | 携带方式 | 有效期 | 说明 |
+|---|---|---|---|
+| 旧共享令牌 | `X-Token` 头 或 `?token=` 参数 | 长期 | 继续有效，覆盖已发布 APK 的一个版本周期 |
+| 会话令牌 | `Authorization: Bearer <session>`（也接受 `X-Token` 头） | 滑动 7 天 + 绝对上限 30 天 | 可撤销，服务端只存哈希 |
+
+- **会话令牌只走请求头，绝不接受 query 参数**——URL 会被日志、Referer、剪贴板记录。
+- 服务端**只存令牌哈希**（SHA-256），明文令牌只在登录响应里出现一次。
+- 改口令 / `--reset` 会撤销全部会话（改口令即踢下线）。
+- 没有账号时**服务照常启动**，只是 `POST /api/auth/login` 返回 503 并提示先建账号。
+
+### 建账号（只需一次）
+
+```bash
+cd server
+.venv/Scripts/python manage.py set-password        # 交互式输入两遍，不回显
+.venv/Scripts/python manage.py set-password --reset # 覆盖已有账号（会撤销全部会话）
+```
+
+口令至少 12 位。文件落在 `server/data/account.json`（**只存哈希**），
+会话落在 `server/data/sessions.json`（**只存令牌哈希**），两者都在 `.gitignore` 内。
+
+### 端点
+
+`/api/v1` 同名路径同样可用（M1c 的别名中间件自动覆盖）。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/auth/login` | `{username, password}` → `{token, expires_at, username}` |
+| POST | `/api/auth/logout` | 撤销当前会话 |
+| GET | `/api/auth/me` | 当前会话是谁 `{username, created_at, expires_at}` |
+| PUT | `/api/auth/password` | `{old_password, new_password}`，改完撤销全部旧会话并返回新会话 |
+
+登录失败一律 401，**不区分**"用户不存在"与"口令错"（同一条消息、恒定时间比较）。
+会话令牌失效（过期 / 撤销 / 伪造）与"没带令牌"返回**完全相同**的 401 响应体，不泄露原因。
+
+> 旧共享令牌与 `WORKBENCH_AUTH_TOKEN` 环境变量属于过渡期设施，等新版 APK 铺开后移除。
+> 前端登录页是下一轮的事；本轮**前端一行没动**，仍全部走旧路径。
+
 ## 配置（环境变量）
 
 `server/config.py` 顶部登记了全部可配置项，**不设任何环境变量时行为与原版逐字一致**：
