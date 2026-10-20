@@ -703,78 +703,15 @@ install_log_filters()
 from hub.openmaic import router as openmaic_router
 app.include_router(openmaic_router)
 
-HUB_WEB = HUB_ROOT / "server" / "hub_web"
-if not HUB_WEB.exists() and getattr(sys, "frozen", False):
-    # PyInstaller 打包运行时：磁盘路径缺失时回退到包内资源（hub_web 随 --add-data 打入）
-    HUB_WEB = Path(sys._MEIPASS) / "hub_web"
 
+# ---------------------------------------------------------------- 路由注册
+# M1b-2 拆 routers/：按域 include，顺序即注册顺序（每个域拆完时往上加一行）。
+# 必须保持 static_pages 在 tasks 之前、docs 在 favorites 之前……
+# 尤其 /hub 要早于 /hub/{path:path}、/app 要早于 /app/{path:path}
+# （两者都在 static_pages 内，文件内顺序已锁，见 tests/test_routers.py）。
+from routers import static_pages
 
-@app.get("/hub")
-def hub_page():
-    """学习中枢入口页"""
-    p = HUB_WEB / "hub.html"
-    if not p.exists():
-        raise HTTPException(status_code=404, detail="hub.html 未构建")
-    return FileResponse(str(p))
-
-
-@app.get("/server.js")
-def server_js():
-    """公共服务器模块（学习中枢页引用）"""
-    p = HUB_WEB / "server.js"
-    if not p.exists():
-        raise HTTPException(status_code=404, detail="server.js 未部署")
-    return FileResponse(str(p), media_type="application/javascript")
-
-
-@app.get("/hub/{path:path}")
-def hub_assets(path: str):
-    """学习中枢静态资源（css/js）"""
-    if ".." in path or "\\" in path or ":" in path:
-        raise HTTPException(status_code=400, detail="非法路径")
-    p = HUB_WEB / path
-    if not p.exists() or not p.is_file():
-        raise HTTPException(status_code=404, detail="文件不存在")
-    return FileResponse(str(p))
-
-
-# ------------------------------------------------ 新版单 App（Vue SPA，web/ 构建产物）
-# 三 Tab 合一：学习中枢 / 题库 / 工作台，hash 路由，同时供 Web 与 APK(file://) 使用
-APP_DIST = HUB_ROOT / "server" / "web_dist" / "app"
-if not APP_DIST.exists() and getattr(sys, "frozen", False):
-    APP_DIST = Path(sys._MEIPASS) / "web_dist" / "app"
-
-
-@app.get("/app")
-def app_index():
-    """新版单 App 入口（SPA index.html）"""
-    p = APP_DIST / "index.html"
-    if not p.exists():
-        raise HTTPException(status_code=404, detail="SPA 未构建：请先在 web/ 目录执行 npm run build")
-    return FileResponse(str(p))
-
-
-@app.get("/app/{path:path}")
-def app_assets(path: str):
-    """SPA 静态资源（hash 路由，无需服务端回退）"""
-    if not path:
-        path = "index.html"          # /app/ 与 /app 都落到入口
-    if ".." in path or "\\" in path or ":" in path:
-        raise HTTPException(status_code=400, detail="非法路径")
-    p = APP_DIST / path
-    if not p.exists() or not p.is_file():
-        raise HTTPException(status_code=404, detail="文件不存在")
-    if path.endswith(".js"):
-        media = "text/javascript"
-    elif path.endswith(".css"):
-        media = "text/css"
-    elif path.endswith(".html"):
-        media = "text/html"
-    elif path.endswith(".json"):
-        media = "application/json"
-    else:
-        media = None
-    return FileResponse(str(p), media_type=media)
+app.include_router(static_pages.router)
 
 
 LAN_IP = None
