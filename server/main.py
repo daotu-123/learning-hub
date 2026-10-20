@@ -28,25 +28,21 @@ import uvicorn
 
 # ---------------------------------------------------------------- paths
 # M1a 配置化：路径/端口/令牌全部来自 config（环境变量驱动，缺省值 = 原硬编码）。
+# M1b-2：settings 读写已下沉 common.py（auth_token 与 routers/settings 共用）。
+from common import get_settings, save_settings
 from config import (
     DATA_DIR,
-    FAVORITES_ROOT,
     HUB_AUTH_TOKEN,
     HUB_HOST,
     HUB_PORT,
     HUB_ROOT,
-    OBSIDIAN_VAULT,
+    OBSIDIAN_VAULT,   # 暂留：media 域（照片）与 _build_context 还在用，拆完即删
     UDP_PORT,
-    USAGE_DB,
 )
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 SETTINGS_JSON = DATA_DIR / "settings.json"
-
-DOUYIN_DIR = OBSIDIAN_VAULT / "抖音收藏"
-XHS_DIR = FAVORITES_ROOT / "小红书收藏"
-DIARY_ROOT = OBSIDIAN_VAULT / "日记"
 
 SERVER_PORT = HUB_PORT
 
@@ -82,23 +78,6 @@ def parse_frontmatter(text: str) -> dict:
         v = v.strip().strip('"').strip("'")
         meta[k] = v
     return meta
-
-
-# ---------------------------------------------------------------- settings
-def get_settings() -> dict:
-    if SETTINGS_JSON.exists():
-        try:
-            return json.loads(SETTINGS_JSON.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {}
-
-
-def save_settings(patch: dict) -> dict:
-    s = get_settings()
-    s.update(patch)
-    SETTINGS_JSON.write_text(json.dumps(s, ensure_ascii=False, indent=2), encoding="utf-8")
-    return s
 
 
 # ---------------------------------------------------------------- 访问令牌
@@ -157,31 +136,6 @@ def _request_token(request) -> str:
 
 
 # ---------------------------------------------------------------- API models
-class UsageReport(BaseModel):
-    date: str
-    apps: List[dict] = []
-    hourly: List[dict] = []   # [{hour, seconds}] 今日按小时活跃分布
-
-
-class DiaryUpdate(BaseModel):
-    date: str
-    content: str
-    base_updated_at: float = 0.0   # 客户端上次拉取时的服务器 mtime
-    client_updated_at: float = 0.0  # 客户端本地最后修改时间
-
-
-class SettingsPatch(BaseModel):
-    background: Optional[str] = None
-    accent: Optional[str] = None
-    theme: Optional[str] = None
-
-
-class PomoReport(BaseModel):
-    date: str
-    task: str = ""
-    minutes: int = 25
-
-
 # ---------------------------------------------------------------- app
 app = FastAPI(title="Workbench Sync Server", version="1.1.0")
 # allow_private_network=True：APK 页面源是 http://appassets.androidplatform.net
@@ -289,12 +243,16 @@ app.include_router(openmaic_router)
 # 尤其 /hub 要早于 /hub/{path:path}、/app 要早于 /app/{path:path}
 # （两者都在 static_pages 内，文件内顺序已锁，见 tests/test_routers.py）。
 from routers import static_pages, tasks, legacy_life, docs, favorites
+from routers import usage, pomodoro, settings
 
 app.include_router(static_pages.router)
 app.include_router(tasks.router)
 app.include_router(legacy_life.router)
 app.include_router(docs.router)
 app.include_router(favorites.router)
+app.include_router(usage.router)
+app.include_router(pomodoro.router)
+app.include_router(settings.router)
 
 # /api/summary 已随 favorites 域搬走；_build_context 暂留 main.py（属 ai 域，下一步搬），
 # 它复用 favorites / docs / usage / pomodoro / legacy_life 域的数据访问函数，从这里导入，
@@ -323,42 +281,6 @@ def root():
         "lan_ip": LAN_IP, "port": SERVER_PORT,
         "tailscale_ip": find_tailscale_ip(),
     }
-
-
-@app.get("/api/usage")
-def usage(days: int = 7):
-    return usage_trend(days)
-
-
-@app.post("/api/usage")
-def usage_post(report: UsageReport):
-    usage_save(report.date, report.apps)
-    hourly_save(report.date, report.hourly)
-    return {"ok": True, "date": report.date, "apps": len(report.apps)}
-
-
-@app.post("/api/pomodoro")
-def pomodoro_post(report: PomoReport):
-    pomodoro_save(report.date, report.task, report.minutes)
-    return {"ok": True, "date": report.date}
-
-
-@app.get("/api/pomodoro")
-def pomodoro_get(date: str = Query(default_factory=lambda: datetime.date.today().isoformat())):
-    return pomodoro_daily(date)
-
-
-@app.get("/api/settings")
-def settings_get():
-    return get_settings()
-
-
-@app.put("/api/settings")
-def settings_put(patch: SettingsPatch):
-    return save_settings(patch.dict(exclude_none=True))
-
-
-IMG_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg")
 
 
 @app.get("/img/{path:path}")

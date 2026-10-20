@@ -104,12 +104,13 @@ def test_vault_single_source():
 
 
 def test_favorites_single_source():
+    """收藏库 vault 同源：main 的派生常量已随 favorites 域搬走，
+    改为验证 routers/favorites 的派生 + vault_reader 的 CLASS_DIR。"""
     import config
-    import main
-    import hub.vault_reader as vr
+    from routers import favorites
 
-    assert vr.CLASS_DIR is config.FAVORITES_ROOT
-    assert main.XHS_DIR == config.FAVORITES_ROOT / "小红书收藏"
+    assert favorites.XHS_DIR == config.FAVORITES_ROOT / "小红书收藏"
+    assert favorites.DOUYIN_DIR == config.OBSIDIAN_VAULT / "抖音收藏"
 
 
 def test_data_dir_single_source():
