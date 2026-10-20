@@ -10,14 +10,25 @@ GET /api/auth/token、GET /、include_router、启动入口。
 业务路由按域拆到 routers/，共享工具在 common.py。
 """
 import os
+import time
+import socket
 import secrets
 import threading
 import datetime
+import sys
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import uvicorn
+
+# 上面这 4 个（socket / time / sys / uvicorn）只在 `if __name__ == "__main__":` 块
+# 及其派生的线程函数（UDP 广播 loop、_open_browser）里被用到。M1b-2 拆 routers 时
+# 顶层 import 被一并清掉，结果是 `import main` 与 TestClient 全绿、而
+# `python main.py`（start_hub.bat / PyInstaller 的真实入口）启动即 NameError。
+# 顶层集中 import 是刻意的：写在 `__main__` 块里的 import 没有任何测试能覆盖到。
+# 兜底的是 tests/test_startup_smoke.py（真跑一次 `python main.py`）。
 
 # ---------------------------------------------------------------- paths
 # M1a 配置化：路径/端口/令牌全部来自 config（环境变量驱动，缺省值 = 原硬编码）。
@@ -225,7 +236,6 @@ def root():
 # ---------------------------------------------------------------- main
 def find_lan_ip() -> Optional[str]:
     try:
-        import socket
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
@@ -237,8 +247,6 @@ def find_lan_ip() -> Optional[str]:
 
 def start_udp_broadcast(port: int, name: str) -> None:
     """局域网 UDP 广播服务存在性（手机 App 自动发现），协议: LEARNINGHUB|<name>|<port>"""
-    import socket
-    import threading
 
     def loop():
         msg = ("LEARNINGHUB|%s|%d" % (name, port)).encode("utf-8")
