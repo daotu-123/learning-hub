@@ -29,40 +29,6 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 SERVER_PORT = HUB_PORT
 
-# ---------------------------------------------------------------- helpers
-def _utc_to_local(dt_str: str):
-    """把带时区的 ISO 时间转成本地 datetime; 失败返回 None"""
-    if not dt_str:
-        return None
-    s = dt_str.strip()
-    try:
-        if s.endswith("Z"):
-            s = s[:-1] + "+00:00"
-        dt = datetime.datetime.fromisoformat(s)
-        if dt.tzinfo is not None:
-            dt = dt.astimezone()
-            dt = dt.replace(tzinfo=None)
-        return dt
-    except Exception:
-        return None
-
-
-def parse_frontmatter(text: str) -> dict:
-    """解析 markdown 前部的 YAML frontmatter"""
-    m = re.match(r"^---\r?\n(.*?)\r?\n---", text, re.S)
-    if not m:
-        return {}
-    meta = {}
-    for line in m.group(1).splitlines():
-        if ":" not in line:
-            continue
-        k, _, v = line.partition(":")
-        k = k.strip()
-        v = v.strip().strip('"').strip("'")
-        meta[k] = v
-    return meta
-
-
 # ---------------------------------------------------------------- 访问令牌
 # 威胁模型（2026-10-18 审查）：服务绑 0.0.0.0:8637 且 CORS 全开、无鉴权，
 # 同网段任意设备可直接读取日记/健康/照片，并可通过 PUT /api/hub/aiconfig
@@ -118,7 +84,6 @@ def _request_token(request) -> str:
     return (q or "").strip()
 
 
-# ---------------------------------------------------------------- API models
 # ---------------------------------------------------------------- app
 app = FastAPI(title="Workbench Sync Server", version="1.1.0")
 # allow_private_network=True：APK 页面源是 http://appassets.androidplatform.net
