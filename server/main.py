@@ -19,6 +19,7 @@ import sys
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
@@ -33,6 +34,11 @@ from auth_sessions import (
     unauthorized_response,
     validate_session,
 )
+
+# M2c-P1/P2：限流与客户端 IP 解析。
+# clientip 不 import ratelimit，两者各自独立，方便测试单独构造实例。
+from ratelimit import LIMITER, is_upload_path, retry_after
+from clientip import is_loopback, request_client_ip
 
 # 上面这 4 个（socket / time / sys / uvicorn）只在 `if __name__ == "__main__":` 块
 # 及其派生的线程函数（UDP 广播 loop、_open_browser）里被用到。M1b-2 拆 routers 时
@@ -72,10 +78,9 @@ AUTH_EXEMPT_API = {"/api/hub/netinfo", "/api/auth/token", "/api/auth/login"}
 
 
 def _loopback(host: str) -> bool:
-    """判断请求是否来自本机。"""
-    if not host:
-        return False
-    return host in ("127.0.0.1", "::1", "localhost")
+    """判断请求是否来自本机。转调 clientip.is_loopback —— M2c 起登录限流
+    也需要同一份判定，而从 routers 反向 import main 会成环。"""
+    return is_loopback(host)
 
 
 def auth_token() -> str:
@@ -154,6 +159,59 @@ def auth_token_endpoint(request: Request):
     if not _loopback(host):
         raise HTTPException(status_code=403, detail="仅本机可读取令牌")
     return {"token": auth_token()}
+
+
+@app.middleware("http")
+async def rate_limit_guard(request: Request, call_next):
+    """M2c-P1：全局令牌桶 + 上传限频。**必须在 auth_guard 之内、路由之外**。
+
+    放在 auth_guard 之后注册 → 位置更外层 → 先于鉴权执行，
+    因此**未认证的扫描流量在碰 Argon2id 之前就被挡掉**。
+    这正是限流该在的地方：爆破的每一发都要先过这一关。
+
+    三条豁免（都与安全无关，是"限流会先杀死自己"的场景）：
+        - 回环请求：本机桌面端，并发轮询不该被自己限死；
+        - OPTIONS 预检：CORS 预检不带凭据，按 IP 限会给浏览器制造随机失败；
+        - /api/auth/login：不走这里，走端点内更细的"按 (IP,账号)"退避。
+
+    返回的 429 是**新状态码**，body 沿用 errors.py 的标准形状
+    （{"error":{"code":"too_many_requests",...},"detail":...,"retry_after":N}）
+    + Retry-After 头。401 的字面量一个字没动。
+    """
+    path = request.url.path
+    if not path.startswith("/api/"):
+        return await call_next(request)
+    host = request.client.host if request.client else ""
+    if _loopback(host):
+        return await call_next(request)
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    ip = request_client_ip(request)
+    delay = 0.0
+    if is_upload_path(path):
+        delay = LIMITER.upload_take(ip)
+    else:
+        delay = LIMITER.api_take(ip)
+    if delay > 0:
+        ra = retry_after(delay)
+        # 429 的 body 刻意用 errors.py 的**标准形状**
+        # {"error":{"code":"too_many_requests",...}}，而不是另起炉灶：
+        # 项目里所有走 HTTPException 的 429 都会被 errors.py 归一化成这个形状，
+        # 中间件若自己造一个 {"error":"rate_limited"}，前端就会同时面对两种
+        # 429 body —— 那才是真正的坑。区分 429 与 401 用 **status_code**
+        # 与 Retry-After，不靠 body。
+        # detail 字段一并给上，与 errors.py 的兼容策略保持一致。
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error": {"code": "too_many_requests", "message": "请求过于频繁，请稍后再试"},
+                "detail": "请求过于频繁，请稍后再试",
+                "retry_after": ra,
+            },
+            headers={"Retry-After": str(ra)},
+        )
+    return await call_next(request)
 
 
 @app.middleware("http")

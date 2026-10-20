@@ -20,6 +20,17 @@
     HUB_DATA_DIR      数据目录            默认 <HUB_ROOT>\\server\\data
     HUB_UDP_PORT      UDP 发现广播端口    默认 8638
     HUB_AUTH_TOKEN   访问令牌（可选）     默认空 = 沿用 settings.json 惰性生成链路
+
+M2c 新增：
+    HUB_API_LIMIT_PER_MIN    全局 API 限流（每分钟）   默认 120
+    HUB_API_BURST            全局 API 突发容量          默认 60
+    HUB_UPLOAD_LIMIT_PER_MIN 上传类限频（每分钟）      默认 12
+    HUB_UPLOAD_BURST         上传类突发容量             默认 4
+    HUB_LOGIN_MAX_FAILURES   连续失败几次后开始退避    默认 5
+    HUB_LOGIN_BASE_DELAY     第一次退避秒数            默认 1
+    HUB_LOGIN_MAX_DELAY      退避封顶秒数              默认 60
+    HUB_LOGIN_WINDOW         "连续失败"窗口秒数        默认 900
+    HUB_TRUSTED_PROXIES      受信反代 IP/CIDR（逗号分隔）默认空 = 不采信 XFF
 """
 import os
 from pathlib import Path
@@ -78,3 +89,20 @@ DEEPTUTOR_DIR = _env_path("HUB_DEEPTUTOR_DIR", r"D:\record\deeptutor\data\user")
 # 空 = 不改动既有链路：WORKBENCH_AUTH_TOKEN → settings.json → 首次非回环请求时
 # 惰性生成并写回 settings.json（见 main.auth_token）。来源顺序不许变。
 HUB_AUTH_TOKEN = _env("HUB_AUTH_TOKEN", "")
+
+# ---------------------------------------------------------------- M2c 限流阈值
+# 全部是**建议值**，缺省即上方 ratelimit 模块里的常量。
+# 单账号自用的量级；如果将来放开多人使用，这几个数必须重新标定。
+HUB_API_LIMIT_PER_MIN = _env_int("HUB_API_LIMIT_PER_MIN", "120")      # 全局令牌桶速率
+HUB_API_BURST = _env_int("HUB_API_BURST", "60")                        # 全局桶容量（突发）
+HUB_UPLOAD_LIMIT_PER_MIN = _env_int("HUB_UPLOAD_LIMIT_PER_MIN", "12")  # 上传类限频
+HUB_UPLOAD_BURST = _env_int("HUB_UPLOAD_BURST", "4")
+HUB_LOGIN_MAX_FAILURES = _env_int("HUB_LOGIN_MAX_FAILURES", "5")      # 连续失败几次后退避
+HUB_LOGIN_BASE_DELAY = float(_env("HUB_LOGIN_BASE_DELAY", "1"))        # 第一次退避 1s
+HUB_LOGIN_MAX_DELAY = float(_env("HUB_LOGIN_MAX_DELAY", "60"))         # 退避封顶 60s
+HUB_LOGIN_WINDOW = float(_env("HUB_LOGIN_WINDOW", "900"))              # "连续"窗口 15 分钟
+
+# 受信反向代理（HUB_TRUSTED_PROXIES）：逗号分隔的 IP 或 CIDR。
+# **默认为空 = 不采信任何 X-Forwarded-For**。
+# 部署在 Caddy/Nginx 后面时必须显式配上，否则限流会把整个代理当成一个 IP。
+HUB_TRUSTED_PROXIES = [x.strip() for x in _env("HUB_TRUSTED_PROXIES", "").split(",") if x.strip()]

@@ -19,6 +19,9 @@
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from ratelimit import LIMITER, retry_after
+from clientip import is_loopback as _loopback_fn, request_client_ip
+
 from auth_sessions import (
     MIN_PASSWORD_LENGTH,
     NO_ACCOUNT_MESSAGE,
@@ -66,17 +69,41 @@ def _current_username(rec: dict) -> str:
 def login(payload: LoginIn, request: Request):
     """口令登录换取会话令牌。
 
+    - 退避期内 → 429（**不进入 Argon2id 校验**，否则退避省不下 CPU，
+      攻击者可以持续消耗你的哈希算力）
     - 没有账号 → 503 + 指引（服务本身照常运行，CLI 引导建账号）
     - 口令错 / 用户名不存在 → 同一个 401、同一条消息，耗时也一致
+    - 成功 → 清掉该 (IP, 账号) 的失败计数
     - 响应里的 token 是**明文**，只在这里出现一次；服务端只存哈希
     """
+    ip = request_client_ip(request)
+    username = (payload.username or "").strip()
+
+    # 回环豁免与中间件一致：本机桌面端连着输错 5 次就被锁 1 分钟，
+    # 会把 owner 自己关在门外，而回环请求不存在"被爆破"的威胁。
+    peer = request.client.host if request.client else ""
+    if not _loopback_fn(peer):
+        delay = LIMITER.login_try(ip, username)
+        if delay > 0:
+            ra = retry_after(delay)
+            # 429 走 errors.py 的标准形状（code=too_many_requests），与中间件侧一致
+            raise HTTPException(
+                status_code=429,
+                detail="登录尝试过于频繁，请稍后再试",
+                headers={"Retry-After": str(ra)},
+            )
+
     if not (load_account().get("password_hash") or "").strip():
         raise HTTPException(status_code=503, detail=NO_ACCOUNT_MESSAGE)
 
     if not check_login(payload.username, payload.password):
+        # 失败计数已在 login_try 里记过（退避期内的请求也计入尝试次数），
+        # 这里不再重复记账。
         # 用户名不存在与口令错走同一条路径：同一条消息、同一个状态码。
         raise HTTPException(status_code=401, detail="用户名或口令错误")
 
+    if not _loopback_fn(peer):
+        LIMITER.login_success(ip, username)
     token, rec = create_session(
         user_agent=request.headers.get("user-agent", ""),
         username=load_account().get("username") or payload.username,

@@ -38,6 +38,8 @@ EXPECTED_MODULES = [
     "logging_setup",
     "apiv1",
     "auth_sessions",
+    "ratelimit",
+    "clientip",
     "manage",
     "dump_routes",
     "main",
