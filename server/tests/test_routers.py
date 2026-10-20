@@ -25,6 +25,11 @@ from dump_routes import dump  # noqa: E402
 # 于是它落在全部路由的最末尾（第 73 条）。见 test_root_route_is_last。
 EXPECTED_OWN = [
     ("GET", "/api/auth/token"),
+    # auth（M2a 身份端点；routers/auth.py，紧跟在 main.py 自带的 /api/auth/token 之后）
+    ("POST", "/api/auth/login"),
+    ("POST", "/api/auth/logout"),
+    ("GET", "/api/auth/me"),
+    ("PUT", "/api/auth/password"),
     # static_pages
     ("GET", "/hub"),
     ("GET", "/server.js"),
@@ -107,10 +112,13 @@ def test_root_route_is_last(all_routes):
 
 
 def test_total_route_count(all_routes):
-    """拆分前 73 条，拆分后必须还是 73 条（一条不少一条不多）。"""
-    assert len(all_routes) == 73, (
-        f"路由条数变了: {len(all_routes)}（期望 73）。新增/删除路由都会走到这里，"
-        f"如果是故意改的，请同步更新本断言与 EXPECTED_OWN。"
+    """基线 73 条（M1b-2 拆分后）；M2a 加了 4 个身份端点 → 77 条。
+
+    任何增删路由都会走到这里。如果是故意改的，请同步更新本断言与 EXPECTED_OWN。
+    """
+    assert len(all_routes) == 77, (
+        f"路由条数变了: {len(all_routes)}（期望 77 = 基线 73 + M2a 的 4 个身份端点）。"
+        f"新增/删除路由都会走到这里，如果是故意改的，请同步更新本断言与 EXPECTED_OWN。"
     )
 
 

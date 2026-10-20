@@ -20,8 +20,19 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 import uvicorn
+
+# M2a 身份体系：会话令牌校验 + legacy 401 响应体。
+# UNAUTHORIZED_BODY 抽在 auth_sessions 里，是为了让这里的鉴权中间件与
+# routers/auth.py 的会话校验共用**同一份** 401 响应体——两边各写一份迟早漂移，
+# 而 401 的字节一变前端就可能退化。
+from auth_sessions import (
+    NO_ACCOUNT_MESSAGE,
+    account_exists,
+    session_token_from_request,
+    unauthorized_response,
+    validate_session,
+)
 
 # 上面这 4 个（socket / time / sys / uvicorn）只在 `if __name__ == "__main__":` 块
 # 及其派生的线程函数（UDP 广播 loop、_open_browser）里被用到。M1b-2 拆 routers 时
@@ -56,7 +67,8 @@ AUTH_TOKEN_ENV = "WORKBENCH_AUTH_TOKEN"
 #  - 静态页面/资源：不校验，否则页面本身都打不开
 #  - /api/hub/netinfo：App 首次发现服务器地址时还不知道令牌
 #  - /api/auth/token：仅回环可读，桌面端用它把令牌抄到手机上
-AUTH_EXEMPT_API = {"/api/hub/netinfo", "/api/auth/token"}
+#  - /api/auth/login：登录入口本身就是"还没有令牌"时调用的
+AUTH_EXEMPT_API = {"/api/hub/netinfo", "/api/auth/token", "/api/auth/login"}
 
 
 def _loopback(host: str) -> bool:
@@ -146,30 +158,38 @@ def auth_token_endpoint(request: Request):
 
 @app.middleware("http")
 async def auth_guard(request: Request, call_next):
-    """非回环访问 /api/* 必须带令牌。
+    """非回环访问 /api/* 必须带令牌（双轨，M2a）。
 
-    放行规则：
-      1) 非 /api/ 路径（静态页面与资源）——不校验，否则页面本身打不开
-      2) AUTH_EXEMPT_API 白名单（netinfo 供首次发现服务器；auth/token 仅回环可读）
-      3) 本机回环请求——桌面浏览器体验不变
-    其余一律要求 X-Token 头或 ?token= 参数。
+    判定顺序（owner 2026-10-20 定）：
+        1) 非 /api/ 路径（静态页面与资源）——不校验，否则页面本身打不开
+        2) 豁免清单 AUTH_EXEMPT_API（netinfo / auth/token / login）
+        3) 回环豁免——本机桌面端体验不变
+    2) 与 3) 都是"直接放行"，先后无所谓，这里按 owner 给的顺序写。
+
+    双轨的意义：旧共享令牌必须继续有效，直到新版 APK 铺开（覆盖一个版本周期）。
+    两套凭据互不干扰——会话令牌只认头，共享令牌还认 query。
+
+    401 的响应体**与 legacy 逐字节一致**（auth_sessions.UNAUTHORIZED_BODY）——
+    改一个字前端就可能退化，所以抽成常量由两处共用，从根上杜绝写法漂移。
     """
     path = request.url.path
     if not path.startswith("/api/"):
         return await call_next(request)
-    if path in AUTH_EXEMPT_API:
-        return await call_next(request)
     host = request.client.host if request.client else ""
     if _loopback(host):
         return await call_next(request)
+    if path in AUTH_EXEMPT_API:
+        return await call_next(request)
+    # 第一轨：旧共享令牌。X-Token 头优先，其次 ?token= 参数（<img>/<a> 无法设头）。
     expected = auth_token()
     given = _request_token(request)
     if expected and given and secrets.compare_digest(given, expected):
         return await call_next(request)
-    return JSONResponse(
-        {"error": "unauthorized", "hint": "非本机访问需带 X-Token 请求头（或在设置页录入令牌）"},
-        status_code=401,
-    )
+    # 第二轨：会话令牌。**只从请求头取**——会话令牌绝不走 query。
+    session = session_token_from_request(request)
+    if session and validate_session(session):
+        return await call_next(request)
+    return unauthorized_response()
 
 
 # M1c：/api/v1 兼容别名（/api/v1/<rest> → /api/<rest>）。
@@ -200,10 +220,12 @@ install_log_filters()
 #           pomodoro → settings → media → ai → hub → openmaic
 # 尤其 /hub 要早于 /hub/{path:path}、/app 要早于 /app/{path:path}
 # （两者都在 static_pages 内，文件内顺序已锁，见 tests/test_routers.py）。
-from routers import static_pages, tasks, legacy_life, docs, favorites
+# M2a 新增 auth 域，排在**最前**：让 /api/auth/token（main.py 自带）与
+# /api/auth/{login,logout,me,password}（routers/auth.py）挨在一起。
+from routers import auth, static_pages, tasks, legacy_life, docs, favorites
 from routers import usage, pomodoro, settings, media, ai
 
-for _r in (static_pages, tasks, legacy_life, docs, favorites,
+for _r in (auth, static_pages, tasks, legacy_life, docs, favorites,
            usage, pomodoro, settings, media, ai):
     app.include_router(_r.router)
 
@@ -231,6 +253,12 @@ def _startup():
     load_index_on_start()
     t = threading.Thread(target=background_refresh, daemon=True)
     t.start()
+    # M2a：没有账号时**服务照常启动**（否则本机与测试全崩），只是登录端点不可用。
+    # 启动日志打一行与 503 响应完全相同的指引。
+    if not account_exists():
+        # flush=True：stdout 被重定向到文件时是块缓冲的，不 flush 这行会
+        # 一直躺在缓冲区里，直到进程退出才落盘——而进程可能被杀。
+        print("  " + NO_ACCOUNT_MESSAGE, flush=True)
 
 
 @app.get("/")

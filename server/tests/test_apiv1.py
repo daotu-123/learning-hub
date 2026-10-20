@@ -243,12 +243,17 @@ def test_trailing_slash_still_reaches_working_endpoint(loop_client):
 
 # ---------------------------------------------------------------- 结构性不变量
 
-def test_route_count_still_73_and_no_v1_routes(app):
-    """中间件方案：路由表零新增，且没有任何一条路由自带 /api/v1 前缀。"""
+def test_no_v1_routes_and_count_matches_baseline(app):
+    """别名机制不新增路由：没有任何一条路由自带 /api/v1 前缀。
+
+    路由总数基线：M1c 拆分后 73 条；M2a 加了 4 个**真实**身份端点
+    （/api/auth/login|logout|me|password）→ 77 条。这 4 条是普通业务路由，
+    与 v1 别名无关；别名本身仍然零新增路由。
+    """
     from dump_routes import dump
 
     rows = dump(app)
-    assert len(rows) == 73, "路由条数变化了：%d（预期 73）" % len(rows)
+    assert len(rows) == 77, "路由条数变化了：%d（预期 77 = 73 基线 + 4 个身份端点）" % len(rows)
     v1_rows = [(m, p) for m, p in rows if p.startswith(API_V1)]
     assert not v1_rows, "出现了 /api/v1 路由，说明退化成了路由级别名：%r" % (v1_rows,)
 

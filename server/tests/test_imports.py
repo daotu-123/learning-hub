@@ -43,6 +43,7 @@ EXPECTED_MODULES = [
     "main",
     # routers/ 十个业务域
     "routers",
+    "routers.auth",
     "routers.static_pages",
     "routers.tasks",
     "routers.legacy_life",
