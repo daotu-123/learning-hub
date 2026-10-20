@@ -87,6 +87,25 @@ def test_filter_keeps_non_string_args():
 
 # ---------------- 端到端：真起 uvicorn ----------------
 
+def test_http_client_bypasses_proxy_env(monkeypatch):
+    """回归锁：NO_PROXY 写成 "[::1]" 时，trust_env=True 会在 build_request 阶段抛
+    httpx.InvalidURL: Invalid port ':1]'（实测踩过）。E2E 用 trust_env=False 绕过。
+
+    这条断言同时记录"为什么会炸"，避免以后有人把 trust_env=False 删回去。
+    """
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:1")
+    monkeypatch.setenv("NO_PROXY", "[::1],127.0.0.1,localhost")
+
+    with pytest.raises(httpx.InvalidURL):
+        httpx.Client(trust_env=True, timeout=5).build_request("GET", "http://127.0.0.1:9/x")
+
+    client = httpx.Client(trust_env=False, timeout=5)
+    req = client.build_request("GET", "http://127.0.0.1:9/x?token=abc")
+    assert "token=abc" in str(req.url)
+    assert not client._mounts, "trust_env=False 时不该挂任何代理 transport"
+
+
 def test_real_access_log_is_masked(tmp_path):
     """起一个真 uvicorn（线程内，日志写临时文件），发带 token 的请求，读文件断言。"""
     import uvicorn
@@ -109,8 +128,11 @@ def test_real_access_log_is_masked(tmp_path):
         assert server.started, "uvicorn 未在预期时间内启动"
         port = server.servers[0].sockets[0].getsockname()[1]
 
-        # netinfo 在免鉴权白名单里，因此 query 上的 token 会被原样带进 access log
-        r = httpx.get(f"http://127.0.0.1:{port}/api/hub/netinfo?token={PLAINTEXT}", timeout=10)
+        # netinfo 在免鉴权白名单里，因此 query 上的 token 会被原样带进 access log。
+        # trust_env=False：本机测试不该读 HTTP(S)_PROXY / NO_PROXY——实测某些环境的
+        # NO_PROXY 写成 "[::1]" 时，httpx 会把它当代理规则解析出 Invalid port ':1]'。
+        with httpx.Client(trust_env=False, timeout=10) as http:
+            r = http.get(f"http://127.0.0.1:{port}/api/hub/netinfo?token={PLAINTEXT}")
         assert r.status_code == 200, r.text
 
         text = ""
