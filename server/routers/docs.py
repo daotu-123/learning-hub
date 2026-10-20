@@ -16,8 +16,6 @@
     deeptutor_daily / deeptutor_notes / diary_sync_state / doc_read
 """
 import datetime
-import hashlib
-import json
 import re
 import sqlite3
 from pathlib import Path

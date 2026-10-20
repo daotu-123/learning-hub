@@ -87,6 +87,10 @@ def usage_trend(days: int = 7) -> dict:
     return {"dates": dates, "daily_total_ms": total_by_date, "apps": by_date}
 
 
+# 供 ai 域复用（下划线开头是模块私有约定，这里显式导出公共别名）
+usage_conn = _usage_conn
+
+
 class UsageReport(BaseModel):
     date: str
     apps: List[dict] = []

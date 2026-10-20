@@ -15,7 +15,6 @@ main.py 的 startup 钩子改成调用这两个导出函数。
 import json
 import threading
 import time
-from pathlib import Path
 
 from fastapi import APIRouter, Query
 

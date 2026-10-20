@@ -91,14 +91,19 @@ def test_defaults_unchanged_with_clean_env():
 # ---------------- 三处 vault 同源 ----------------
 
 def test_vault_single_source():
-    """main / vault_reader / openmaic 必须共用同一个 vault 根对象。"""
+    """main / vault_reader / openmaic 必须共用同一个 vault 根对象。
+
+    M1b-2 后 main.py 不再持有 OBSIDIAN_VAULT（media/docs 等域各自从 config 派生），
+    因此这里验证"引用 config 的三个使用方"，而不是 main。
+    """
     import config
-    import main
     import hub.openmaic as om
     import hub.vault_reader as vr
+    from routers import docs, media
 
-    assert main.OBSIDIAN_VAULT is config.OBSIDIAN_VAULT
     assert vr.OBSIDIAN_VAULT is config.OBSIDIAN_VAULT
+    assert docs.OBSIDIAN_VAULT is config.OBSIDIAN_VAULT
+    assert media.OBSIDIAN_VAULT is config.OBSIDIAN_VAULT
     # openmaic 的 roots 是 JSON 配置（字符串），比对值而不是对象 identity
     assert str(om.DEFAULT_CFG["roots"][0]) == str(config.OBSIDIAN_VAULT)
 

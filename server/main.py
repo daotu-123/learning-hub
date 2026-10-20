@@ -4,45 +4,28 @@ Workbench PC Sync Server (工作台 PC 端同步服务器)
 - 局域网内供 Android App 访问
 - 聚合: 抖音/小红书当日收藏、DeepTutor 当日活动、Obsidian 日记读写、手机使用时间统计
 - 所有数据只在本机 (E:\agent\androd-app\server\data\) 与 Obsidian vault 之间流动, 不上云
+
+M1b-2 起本文件只保留：app 实例、三个中间件（CORS → PNA → auth）、鉴权代码、
+GET /api/auth/token、GET /、include_router、启动入口。
+业务路由按域拆到 routers/，共享工具在 common.py。
 """
 import os
-import re
-import json
-import time
-import socket
 import secrets
-import sqlite3
-import hashlib
 import threading
 import datetime
-import sys
-from pathlib import Path
-from typing import Optional, List
+from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
-import urllib.request
-import uvicorn
+from fastapi.responses import JSONResponse
 
 # ---------------------------------------------------------------- paths
 # M1a 配置化：路径/端口/令牌全部来自 config（环境变量驱动，缺省值 = 原硬编码）。
 # M1b-2：settings 读写已下沉 common.py（auth_token 与 routers/settings 共用）。
 from common import get_settings, save_settings
-from config import (
-    DATA_DIR,
-    HUB_AUTH_TOKEN,
-    HUB_HOST,
-    HUB_PORT,
-    HUB_ROOT,
-    OBSIDIAN_VAULT,   # 暂留：media 域（照片）与 _build_context 还在用，拆完即删
-    UDP_PORT,
-)
+from config import DATA_DIR, HUB_AUTH_TOKEN, HUB_HOST, HUB_PORT, UDP_PORT
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-SETTINGS_JSON = DATA_DIR / "settings.json"
 
 SERVER_PORT = HUB_PORT
 
@@ -212,14 +195,6 @@ async def auth_guard(request: Request, call_next):
         status_code=401,
     )
 
-# Learning Hub 只读中枢（/api/hub/* + /hub 页面）
-from hub.router import router as hub_router, find_tailscale_ip
-app.include_router(hub_router)
-
-# 健康检查（/health/live、/health/ready）——在 /api/ 之外，不进鉴权中间件
-from health import router as health_router
-app.include_router(health_router)
-
 # 统一错误响应（M1a-C）：只新增 error 形状，保留既有 detail 字段
 from errors import register as register_error_handlers
 register_error_handlers(app)
@@ -232,32 +207,31 @@ from logging_setup import build_log_config, install_log_filters
 # 同时挂 httpx logger：它自己会打 "HTTP Request: GET …?token=… " 这条出站日志。
 install_log_filters()
 
-# Learning Hub: OpenMAIC AI 课堂（/api/hub/openmaic/*）
-from hub.openmaic import router as openmaic_router
-app.include_router(openmaic_router)
-
 
 # ---------------------------------------------------------------- 路由注册
-# M1b-2 拆 routers/：按域 include，顺序即注册顺序（每个域拆完时往上加一行）。
-# 必须保持 static_pages 在 tasks 之前、docs 在 favorites 之前……
+# M1b-2 拆 routers/：按域 include，顺序即注册顺序。
+# 既定顺序：static_pages → tasks → legacy_life → docs → favorites → usage →
+#           pomodoro → settings → media → ai → hub → openmaic
 # 尤其 /hub 要早于 /hub/{path:path}、/app 要早于 /app/{path:path}
 # （两者都在 static_pages 内，文件内顺序已锁，见 tests/test_routers.py）。
 from routers import static_pages, tasks, legacy_life, docs, favorites
-from routers import usage, pomodoro, settings
+from routers import usage, pomodoro, settings, media, ai
 
-app.include_router(static_pages.router)
-app.include_router(tasks.router)
-app.include_router(legacy_life.router)
-app.include_router(docs.router)
-app.include_router(favorites.router)
-app.include_router(usage.router)
-app.include_router(pomodoro.router)
-app.include_router(settings.router)
+for _r in (static_pages, tasks, legacy_life, docs, favorites,
+           usage, pomodoro, settings, media, ai):
+    app.include_router(_r.router)
 
-# /api/summary 已随 favorites 域搬走；_build_context 暂留 main.py（属 ai 域，下一步搬），
-# 它复用 favorites / docs / usage / pomodoro / legacy_life 域的数据访问函数，从这里导入，
-# 避免中间状态出现 NameError。
-from routers.favorites import scan_favorites
+# Learning Hub 只读中枢（/api/hub/* + /hub 页面）
+from hub.router import router as hub_router, find_tailscale_ip
+app.include_router(hub_router)
+
+# 健康检查（/health/live、/health/ready）——在 /api/ 之外，不进鉴权中间件
+from health import router as health_router
+app.include_router(health_router)
+
+# Learning Hub: OpenMAIC AI 课堂（/api/hub/openmaic/*）
+from hub.openmaic import router as openmaic_router
+app.include_router(openmaic_router)
 
 
 LAN_IP = None
@@ -281,284 +255,6 @@ def root():
         "lan_ip": LAN_IP, "port": SERVER_PORT,
         "tailscale_ip": find_tailscale_ip(),
     }
-
-
-@app.get("/img/{path:path}")
-def vault_image(path: str):
-    """通用 vault 图片服务: 日记里的 ![[路径]] 图片都能在手机上查看/下载"""
-    if ".." in path or ":" in path or "\\" in path:
-        raise HTTPException(status_code=400, detail="非法路径")
-    p = OBSIDIAN_VAULT / path
-    if not p.exists() or not p.is_file():
-        raise HTTPException(status_code=404, detail="文件不存在")
-    if p.suffix.lower() not in IMG_EXTS:
-        raise HTTPException(status_code=400, detail="非图片文件")
-    return FileResponse(str(p))
-
-
-# ---------------------------------------------------------------- 照片同步
-PHOTO_ROOT = OBSIDIAN_VAULT / "工作台照片"
-
-
-class PhotoUpload(BaseModel):
-    date: str
-    name: str = "photo.jpg"
-    data: str = ""   # base64 (可含 data:image/jpeg;base64, 前缀)
-
-
-def _photo_path(date_str: str, name: str) -> Path:
-    try:
-        d = datetime.date.fromisoformat(date_str)
-    except ValueError:
-        d = datetime.date.today()
-    month_dir = PHOTO_ROOT / f"{d.year}-{d.month:02d}"
-    month_dir.mkdir(parents=True, exist_ok=True)
-    # 安全文件名: 时间戳 + 原扩展名
-    ext = os.path.splitext(name)[1].lower()
-    if ext not in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"):
-        ext = ".jpg"
-    fname = f"{datetime.datetime.now().strftime('%H%M%S')}_{d.isoformat()}{ext}"
-    return month_dir / fname
-
-
-@app.post("/api/photo/upload")
-def photo_upload(r: PhotoUpload):
-    import base64 as b64
-    if not r.data:
-        raise HTTPException(status_code=400, detail="无图片数据")
-    payload = r.data
-    if "," in payload and payload.startswith("data:"):
-        payload = payload.split(",", 1)[1]
-    try:
-        raw = b64.b64decode(payload)
-    except Exception:
-        raise HTTPException(status_code=400, detail="base64 解码失败")
-    if len(raw) > 20 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="图片超过 20MB")
-    p = _photo_path(r.date, r.name)
-    p.write_bytes(raw)
-    rel = str(p.relative_to(OBSIDIAN_VAULT)).replace("\\", "/")
-    parts = rel.split("/")   # 工作台照片/月份/文件
-    return {"ok": True, "path": str(p), "rel": rel,
-            "url": "/photos/" + "/".join(parts[1:])}
-
-
-@app.get("/api/photos")
-def photos_list(month: str = "", limit: int = 200):
-    """列出工作台照片, 按月份过滤, 最新的在前"""
-    if not PHOTO_ROOT.exists():
-        return {"photos": [], "months": []}
-    months = sorted([d.name for d in PHOTO_ROOT.iterdir() if d.is_dir()], reverse=True)
-    if month and month not in months:
-        return {"photos": [], "months": months}
-    targets = [PHOTO_ROOT / month] if month else [PHOTO_ROOT / m for m in months]
-    photos = []
-    for t in targets:
-        if not t.exists():
-            continue
-        for f in sorted(t.iterdir(), reverse=True):
-            if f.is_file() and f.suffix.lower() in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
-                rel = str(f.relative_to(OBSIDIAN_VAULT)).replace("\\", "/")
-                parts = rel.split("/")
-                photos.append({
-                    "path": rel,
-                    "url": "/photos/" + "/".join(parts[1:]),
-                    "month": parts[1],
-                    "name": f.name,
-                    "size": f.stat().st_size,
-                })
-    photos.sort(key=lambda p: p["path"], reverse=True)
-    return {"photos": photos[:limit], "months": months}
-
-
-@app.get("/photos/{month}/{name}")
-def photo_file(month: str, name: str):
-    if "/" in name or "\\" in name or ".." in name or "/" in month or ".." in month:
-        raise HTTPException(status_code=400, detail="非法路径")
-    p = PHOTO_ROOT / month / name
-    if not p.exists():
-        raise HTTPException(status_code=404, detail="照片不存在")
-    return FileResponse(str(p))
-
-
-# ---------------------------------------------------------------- AI 助手 (WorkBuddy 风格对话)
-AI_ENV = Path(r"C:\Users\Administrator\AppData\Local\hermes\.env")
-HOMEWORK_WEAK = Path(r"E:\obsidian\depot\homework\AI错题本\薄弱点分析.md")
-
-
-def _ai_key():
-    # 优先读 settings.json 里通过 /api/hub/aiconfig 配置的 Key
-    try:
-        s = json.loads(SETTINGS_JSON.read_text(encoding="utf-8"))
-        k = (s.get("ai") or {}).get("deepseek_key", "")
-        if k:
-            return k
-    except Exception:
-        pass
-    try:
-        for line in AI_ENV.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line.startswith("DEEPSEEK_API_KEY="):
-                return line.split("=", 1)[1].strip()
-    except Exception:
-        pass
-    return os.environ.get("DEEPSEEK_API_KEY", "")
-
-
-def _build_context(date_str: str) -> str:
-    """组装工作台今日数据摘要, 供 AI 理解用户状态"""
-    parts = []
-    try:
-        favs = scan_favorites()
-        day = favs.get(date_str, {})
-        dt = deeptutor_daily(date_str)
-        notes = deeptutor_notes(date_str)
-        ds = diary_sync_state(date_str)
-        con = _usage_conn()
-        con.row_factory = sqlite3.Row
-        u = con.execute(
-            "SELECT COUNT(*) AS n, COALESCE(SUM(day_ms),0) AS ms FROM usage WHERE date=?",
-            (date_str,)).fetchone()
-        con.close()
-        note_sum = "、".join(f"{k}{len(v)}" for k, v in notes.items()) if notes else "无"
-        parts.append(
-            f"今日({date_str})概览: 收藏 抖音{len(day.get('douyin', []))}条/小红书{len(day.get('xiaohongshu', []))}条; "
-            f"DeepTutor 会话{len(dt['sessions'])}个/消息{dt['messages']}条, Obsidian新增内容[{note_sum}]; "
-            f"日记{'已写' if ds['exists'] else '未写'}; 使用统计 应用{u['n']}个/总时长{round(u['ms']/60000)}分钟")
-        for k, items in notes.items():
-            for it in items[:2]:
-                try:
-                    txt = Path(it["path"]).read_text(encoding="utf-8", errors="ignore")[:300]
-                    parts.append(f"[{k}] {it['title']}:\n{txt}")
-                except Exception:
-                    pass
-    except Exception as e:
-        parts.append(f"(概览读取失败: {e})")
-    try:
-        t = usage_trend(7)
-        parts.append("近7天使用时长(分钟): " + json.dumps(
-            {k: round(v / 60000) for k, v in t.items()}, ensure_ascii=False))
-    except Exception:
-        pass
-    try:
-        p = pomodoro_daily(date_str)
-        parts.append(f"今日番茄钟: {p['count']}个/专注{p['focus_min']}分钟")
-    except Exception:
-        pass
-    try:
-        # 昨日数据 (复盘用)
-        y_date = (datetime.date.fromisoformat(date_str) - datetime.timedelta(days=1)).isoformat()
-        y_p = pomodoro_daily(y_date)
-        y_h = health_daily(y_date)
-        y_d = doc_read("diary", y_date)
-        y_parts = [f"昨日({y_date})番茄{p['count']}个/专注{p['focus_min']}分钟"]
-        y_parts.append(f"睡眠{y_h['sleep_min']}分钟/运动{y_h['exercise_min']}分钟")
-        if y_d["exists"]:
-            y_parts.append("日记:" + y_d["content"][:200])
-        parts.append("; ".join(y_parts))
-    except Exception:
-        pass
-    try:
-        # 近7天汇总 (周总结用)
-        wk = {}
-        for i in range(7):
-            d = (datetime.date.fromisoformat(date_str) - datetime.timedelta(days=i)).isoformat()
-            p = pomodoro_daily(d)
-            wk[d] = {"pomo": p["count"], "focus": p["focus_min"]}
-        parts.append("近7天番茄钟: " + json.dumps(wk, ensure_ascii=False))
-        ht = health_trend(7)
-        parts.append("近7天健康(分钟): " + json.dumps(ht, ensure_ascii=False))
-    except Exception:
-        pass
-    try:
-        # 今日小时活跃度 (高效时段分析用)
-        hrs = hourly_daily(date_str)
-        if hrs:
-            peak = max(hrs, key=lambda h: h["seconds"])
-            active = [h for h in hrs if h["seconds"] > 0]
-            parts.append(f"今日活跃时段: 高峰{peak['hour']}:00-{peak['hour']+1}:00({round(peak['seconds']/60)}分钟), 共{len(active)}个活跃小时: " +
-                         ", ".join(f"{h['hour']}:00({round(h['seconds']/60)}m)" for h in active[:12]))
-    except Exception:
-        pass
-    try:
-        h = health_daily(date_str)
-        parts.append(f"今日健康: 睡眠{h['sleep_min']}分钟/运动{h['exercise_min']}分钟")
-    except Exception:
-        pass
-    try:
-        tasks = []
-        if TASKS_DIR.exists():
-            for p in sorted(TASKS_DIR.glob("*.md")):
-                try:
-                    t = _parse_task_file(p)
-                    tasks.append(f"{t['name']}({'已完成' if t['status'] == 'done' else '进行中'})")
-                except Exception:
-                    pass
-        parts.append("任务清单: " + ("; ".join(tasks[:20]) if tasks else "无"))
-    except Exception:
-        pass
-    try:
-        d = doc_read("diary", date_str)
-        if d["exists"]:
-            parts.append("今日日记内容:\n" + d["content"][:800])
-    except Exception:
-        pass
-    try:
-        if HOMEWORK_WEAK.exists():
-            txt = HOMEWORK_WEAK.read_text(encoding="utf-8")
-            m = re.search(r"## 薄弱考点 Top.*?(?=## |\Z)", txt, re.S)
-            if m:
-                parts.append("考研薄弱考点:\n" + m.group(0)[:600])
-    except Exception:
-        pass
-    return "\n".join(parts)
-
-
-class AIChat(BaseModel):
-    messages: List[dict] = []
-    date: str = ""
-
-
-@app.post("/api/ai/chat")
-def ai_chat(r: AIChat):
-    key = _ai_key()
-    if not key:
-        raise HTTPException(status_code=503, detail="PC 端未配置 DeepSeek API Key")
-    date = r.date or datetime.date.today().isoformat()
-    ctx = _build_context(date)
-    sys_prompt = (
-        "你是用户手机工作台的 AI 助手(类似腾讯 WorkBuddy 的数字同事)。"
-        "基于下面的用户工作台数据回答问题：做总结、分析趋势、指出问题、给建议、制定学习/生活计划。"
-        "数据来自手机+PC 同步，可能不完整，请如实说明。"
-        "回答用简洁口语化中文，多用短段落和要点列表，不要客套。\n\n"
-        "=== 用户工作台数据 ===" + ctx
-    )
-    msgs = [{"role": "system", "content": sys_prompt}]
-    for m in r.messages[-10:]:
-        if m.get("role") in ("user", "assistant") and m.get("content"):
-            msgs.append({"role": m["role"], "content": str(m["content"])[:2000]})
-    if len(msgs) == 1:
-        msgs.append({"role": "user", "content": "你好，介绍一下我今天的整体情况"})
-    payload = {
-        "model": "deepseek-chat",
-        "messages": msgs,
-        "temperature": 0.5,
-        "max_tokens": 1200,
-    }
-    try:
-        req = urllib.request.Request(
-            "https://api.deepseek.com/chat/completions",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json", "Authorization": "Bearer " + key})
-        resp = json.loads(urllib.request.urlopen(req, timeout=90).read().decode("utf-8"))
-        return {"reply": resp["choices"][0]["message"]["content"]}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"AI 调用失败: {e}")
-
-
-@app.get("/api/ai/context")
-def ai_context(date: str = Query(default_factory=lambda: datetime.date.today().isoformat())):
-    return {"date": date, "context": _build_context(date)}
 
 
 # ---------------------------------------------------------------- main
