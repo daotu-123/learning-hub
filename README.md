@@ -109,6 +109,28 @@ GET /api/v1/hub/today ≡ GET /api/hub/today
   再由 Starlette 的 `redirect_slashes` 307 到 `/api/tasks`——重定向目标不带 `v1`。
   功能上不受影响（旧路径就是别名），因此没有去改写 `Location` 响应头。
 
+## 配置（环境变量）
+
+`server/config.py` 顶部登记了全部可配置项，**不设任何环境变量时行为与原版逐字一致**：
+
+| 变量 | 作用 | 缺省（作者本机） |
+|---|---|---|
+| `HUB_HOST` / `HUB_PORT` | 监听地址 / 端口 | `0.0.0.0` / `8637` |
+| `HUB_VAULT` | Obsidian 主库（日记、DeepTutor、照片） | 作者本机路径 |
+| `HUB_FAVORITES` | 收藏库路径（抖音 / 小红书） | 作者本机路径 |
+| `HUB_HERMES_DIR` | hermes 账本目录（复习队列 / 积分） | 作者本机路径 |
+| `HUB_DEEPTUTOR_DIR` | DeepTutor 数据目录 | 作者本机路径 |
+| `HUB_DATA_DIR` | 服务数据目录（settings/plans/usage.db/日志） | `<HUB_ROOT>\server\data` |
+| `HUB_UDP_PORT` | 局域网自动发现广播端口 | `8638` |
+| `HUB_AUTH_TOKEN` | 访问令牌（可选，覆盖 settings.json 中的值） | 空 = 惰性生成 |
+
+> 缺省值是**作者本机目录**，只为「克隆下来直接能跑」。部署到其它机器（尤其 VPS）时
+> 必须用环境变量覆盖，否则数据会写到不存在的路径。例：
+>
+> ```bash
+> HUB_PORT=8637 HUB_VAULT=/srv/notes HUB_FAVORITES=/srv/favorites python main.py
+> ```
+
 ## 数据与隐私
 
 - 所有数据存在本机：Obsidian 库（日记）、JSON 账本（复习队列）、`server/data/`（设置与统计）
