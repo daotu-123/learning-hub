@@ -13,10 +13,12 @@ import datetime
 from pathlib import Path
 from typing import Optional, List, Dict
 
-OBSIDIAN_VAULT = Path(r"E:\soft_files\obsidian-files\self-improve\self-improve")
+# M1a：vault 根改由 config 单一来源（原为本文件硬编码，与 main.py / openmaic.py 三处重复）
+from config import FAVORITES_ROOT, OBSIDIAN_VAULT
+
 DIARY_ROOT = OBSIDIAN_VAULT / "日记"
 DEEPTUTOR_DIR = OBSIDIAN_VAULT / "DeepTutor"
-CLASS_DIR = Path(r"E:\soft_files\obsidian-files\depot\class")
+CLASS_DIR = FAVORITES_ROOT
 HERMES_SCRIPTS = Path(r"E:\soft_files\tools\hermes-scripts")
 
 # 收藏库各平台目录（frontmatter 链接字段名不同）

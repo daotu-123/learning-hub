@@ -22,7 +22,9 @@ from typing import Optional
 
 from . import vault_reader as vr
 
-DATA_DIR = Path(r"E:\agent\androd-app\server\data")
+# M1a：data 目录改由 config 单一来源（原为本文件硬编码）
+from config import DATA_DIR
+
 BACKUP_ROOT = DATA_DIR / "backups"
 MAX_BACKUPS = 30
 PLANS_JSON = DATA_DIR / "plans.json"

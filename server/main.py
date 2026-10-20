@@ -27,22 +27,30 @@ import urllib.request
 import uvicorn
 
 # ---------------------------------------------------------------- paths
-APP_ROOT = Path(r"E:\agent\androd-app")
-DATA_DIR = APP_ROOT / "server" / "data"
+# M1a 配置化：路径/端口/令牌全部来自 config（环境变量驱动，缺省值 = 原硬编码）。
+from config import (
+    DATA_DIR,
+    FAVORITES_ROOT,
+    HUB_AUTH_TOKEN,
+    HUB_HOST,
+    HUB_PORT,
+    OBSIDIAN_VAULT,
+    PROJECT_ROOT as APP_ROOT,
+)
+
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 USAGE_DB = DATA_DIR / "usage.db"
 SETTINGS_JSON = DATA_DIR / "settings.json"
 
-OBSIDIAN_VAULT = Path(r"E:\soft_files\obsidian-files\self-improve\self-improve")
 DOUYIN_DIR = OBSIDIAN_VAULT / "抖音收藏"
-XHS_DIR = Path(r"E:\soft_files\obsidian-files\depot\class\小红书收藏")
+XHS_DIR = FAVORITES_ROOT / "小红书收藏"
 DIARY_ROOT = OBSIDIAN_VAULT / "日记"
 
 DEEPTUTOR_DB = Path(r"D:\record\deeptutor\data\user\chat_history.db")
 DEEPTUTOR_LOG = Path(r"D:\record\deeptutor\data\user\logs\deeptutor.jsonl")
 
-SERVER_PORT = 8637
+SERVER_PORT = HUB_PORT
 
 # ---------------------------------------------------------------- helpers
 def _utc_to_local(dt_str: str):
@@ -519,7 +527,8 @@ def save_settings(patch: dict) -> dict:
 # 改写一份 JS 即可拿到 window.Native 的全部原生能力。
 #
 # 策略：本机回环请求放行（桌面浏览器体验不变），非回环必须带令牌。
-# 令牌来源优先级：环境变量 > settings.json > 首次自动生成并落盘。
+# 令牌来源优先级（M1a 起，既有顺序不变，仅在既有环境变量之后追加 HUB_AUTH_TOKEN）：
+#   环境变量 WORKBENCH_AUTH_TOKEN > 环境变量 HUB_AUTH_TOKEN > settings.json > 首次自动生成并落盘。
 # 客户端可用 X-Token 头，或用 ?token= 查询参数（<img>/<a> 无法设请求头）。
 AUTH_TOKEN_ENV = "WORKBENCH_AUTH_TOKEN"
 
@@ -538,8 +547,15 @@ def _loopback(host: str) -> bool:
 
 
 def auth_token() -> str:
-    """读取（必要时生成）访问令牌。"""
-    env = (os.environ.get(AUTH_TOKEN_ENV) or "").strip()
+    """读取（必要时生成）访问令牌。
+
+    来源顺序（承重项，不许调整）：
+      1) 环境变量 WORKBENCH_AUTH_TOKEN（既有）
+      2) 环境变量 HUB_AUTH_TOKEN（M1a 新增，与 1 同级，插在既有 env 之后）
+      3) settings.json 的 auth_token（既有）
+      4) 都没有 → secrets.token_urlsafe(24) 生成并写回 settings.json（既有）
+    """
+    env = (os.environ.get(AUTH_TOKEN_ENV) or HUB_AUTH_TOKEN or "").strip()
     if env:
         return env
     s = get_settings()
@@ -1407,7 +1423,7 @@ if __name__ == "__main__":
         print("  Tailscale: 未检测到 (安装并登录后自动支持跨网络同步)")
     print(f"  数据目录: {DATA_DIR}")
     print(f"  日志文件: {LOG_FILE}")
-    print("  手机 App 设置服务器地址为: http://<本机IP>:8637")
+    print(f"  手机 App 设置服务器地址为: http://<本机IP>:{SERVER_PORT}")
     print("=" * 56)
 
     # 端口已被占用（服务已在运行）→ 只打开网页，不重复启动（与 start_hub.bat 行为一致）
@@ -1444,4 +1460,4 @@ if __name__ == "__main__":
             pass
 
     threading.Thread(target=_open_browser, daemon=True).start()
-    uvicorn.run(app, host="0.0.0.0", port=SERVER_PORT, log_level="info", log_config=LOG_CONFIG)
+    uvicorn.run(app, host=HUB_HOST, port=SERVER_PORT, log_level="info", log_config=LOG_CONFIG)

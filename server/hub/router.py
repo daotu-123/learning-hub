@@ -28,7 +28,11 @@ from . import writer as wr
 
 router = APIRouter(prefix="/api/hub", tags=["hub"])
 
-DATA_DIR = Path(r"E:\agent\androd-app\server\data")
+# M1a：data 目录改由 config 单一来源（原为本文件硬编码），
+# 否则 HUB_DATA_DIR 环境变量只会改变 main.py 的落点而这里不跟着变。
+import config
+from config import DATA_DIR
+
 SETTINGS_JSON = DATA_DIR / "settings.json"
 WALLPAPER_DIR = DATA_DIR / "wallpapers"
 WALLPAPER_DIR.mkdir(parents=True, exist_ok=True)
@@ -444,7 +448,7 @@ def hub_aiconfig_put(body: AiKeyIn):
 
 
 # ---------------------------------------------------------------- 网络信息（Tailscale 远程访问）
-HUB_PORT = 8637   # 与 server/main.py SERVER_PORT 保持一致
+HUB_PORT = config.HUB_PORT   # 与 server/main.py SERVER_PORT 同源（M1a 配置化）
 
 _NETINFO_CACHE = {"ts": 0.0, "tailscale": None}
 NETINFO_TTL = 60.0   # 秒；Tailscale 地址不常变，缓存避免每请求都起子进程

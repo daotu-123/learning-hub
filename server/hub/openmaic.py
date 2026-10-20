@@ -28,9 +28,12 @@ from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+# M1a：data 目录与 vault 根改由 config 单一来源（原为本文件硬编码）
+from config import DATA_DIR as DATA_DIR_ENV, OBSIDIAN_VAULT
+
 router = APIRouter(prefix="/api/hub/openmaic", tags=["openmaic"])
 
-DATA_DIR = Path(r"E:\agent\androd-app\server\data")
+DATA_DIR = DATA_DIR_ENV
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 SETTINGS_JSON = DATA_DIR / "settings.json"
 JOBS_JSON = DATA_DIR / "openmaic_jobs.json"
@@ -39,7 +42,7 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_CFG = {
     "roots": [
-        r"E:\soft_files\obsidian-files\self-improve\self-improve",
+        str(OBSIDIAN_VAULT),
         r"E:\obsidian\depot\homework",
         r"F:\题库",
     ],
