@@ -10,18 +10,19 @@
    __file__ 指向包内临时目录，改用它会改变数据落点。
 
 新增环境变量清单：
-    HUB_HOST        监听地址            默认 0.0.0.0
-    HUB_PORT        监听端口            默认 8637
-    HUB_VAULT       Obsidian 主 vault   默认 E:\\soft_files\\obsidian-files\\self-improve\\self-improve
-    HUB_FAVORITES   收藏库 vault        默认 E:\\soft_files\\obsidian-files\\depot\\class
-    HUB_DATA_DIR    数据目录            默认 <PROJECT_ROOT>\\server\\data
-    HUB_AUTH_TOKEN 访问令牌（可选）      默认空 = 沿用 settings.json 惰性生成链路
+    HUB_HOST          监听地址            默认 0.0.0.0
+    HUB_PORT          监听端口            默认 8637
+    HUB_ROOT          项目根              默认 E:\\agent\\androd-app
+    HUB_VAULT         Obsidian 主 vault   默认 E:\\soft_files\\obsidian-files\\self-improve\\self-improve
+    HUB_FAVORITES     收藏库 vault        默认 E:\\soft_files\\obsidian-files\\depot\\class
+    HUB_HERMES_DIR    hermes 账本目录     默认 E:\\soft_files\\tools\\hermes-scripts
+    HUB_DEEPTUTOR_DIR DeepTutor 数据目录  默认 D:\\record\\deeptutor\\data\\user
+    HUB_DATA_DIR      数据目录            默认 <HUB_ROOT>\\server\\data
+    HUB_UDP_PORT      UDP 发现广播端口    默认 8638
+    HUB_AUTH_TOKEN   访问令牌（可选）     默认空 = 沿用 settings.json 惰性生成链路
 """
 import os
 from pathlib import Path
-
-# 历史硬编码的项目根（原 main.py:30）。
-PROJECT_ROOT = Path(r"E:\agent\androd-app")
 
 
 def _env(name: str, default: str) -> str:
@@ -42,13 +43,19 @@ def _env_int(name: str, default: str) -> int:
         raise RuntimeError(f"环境变量 {name} 不是合法整数: {os.environ.get(name)!r}")
 
 
+# ---------------------------------------------------------------- 项目根
+# 原 main.py:30 的硬编码。VPS 上项目不会装在 E:\agent\androd-app，必须可覆盖。
+HUB_ROOT = _env_path("HUB_ROOT", r"E:\agent\androd-app")
+PROJECT_ROOT = HUB_ROOT          # 兼容旧名（main.py 里以 APP_ROOT 引用）
+
 # ---------------------------------------------------------------- 监听地址
 HUB_HOST = _env("HUB_HOST", "0.0.0.0")
 HUB_PORT = _env_int("HUB_PORT", "8637")
+UDP_PORT = _env_int("HUB_UDP_PORT", "8638")   # 原 main.py 里写死的广播目标端口
 
 # ---------------------------------------------------------------- 数据落点
 # 原 main.py:31 / hub/router.py:31 / hub/openmaic.py:33 / hub/writer.py:26
-DATA_DIR = _env_path("HUB_DATA_DIR", str(PROJECT_ROOT / "server" / "data"))
+DATA_DIR = _env_path("HUB_DATA_DIR", str(HUB_ROOT / "server" / "data"))
 USAGE_DB = DATA_DIR / "usage.db"     # 原 main.py:34 / hub/router.py:35
 
 # ---------------------------------------------------------------- Obsidian vault
@@ -58,6 +65,14 @@ OBSIDIAN_VAULT = _env_path(
 )
 # 原 main.py:39（XHS_DIR）、hub/vault_reader.py:19（CLASS_DIR）
 FAVORITES_ROOT = _env_path("HUB_FAVORITES", r"E:\soft_files\obsidian-files\depot\class")
+
+# ---------------------------------------------------------------- hermes 账本
+# 原 hub/vault_reader.py:20、hub/queue_reader.py:16（两处重复）
+HERMES_DIR = _env_path("HUB_HERMES_DIR", r"E:\soft_files\tools\hermes-scripts")
+
+# ---------------------------------------------------------------- DeepTutor
+# 原 main.py:50-51（chat_history.db 与 logs/deeptutor.jsonl）
+DEEPTUTOR_DIR = _env_path("HUB_DEEPTUTOR_DIR", r"D:\record\deeptutor\data\user")
 
 # ---------------------------------------------------------------- 访问令牌
 # 空 = 不改动既有链路：WORKBENCH_AUTH_TOKEN → settings.json → 首次非回环请求时

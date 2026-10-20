@@ -30,12 +30,14 @@ import uvicorn
 # M1a 配置化：路径/端口/令牌全部来自 config（环境变量驱动，缺省值 = 原硬编码）。
 from config import (
     DATA_DIR,
+    DEEPTUTOR_DIR,
     FAVORITES_ROOT,
     HUB_AUTH_TOKEN,
     HUB_HOST,
     HUB_PORT,
+    HUB_ROOT,
     OBSIDIAN_VAULT,
-    PROJECT_ROOT as APP_ROOT,
+    UDP_PORT,
     USAGE_DB,
 )
 
@@ -47,8 +49,8 @@ DOUYIN_DIR = OBSIDIAN_VAULT / "抖音收藏"
 XHS_DIR = FAVORITES_ROOT / "小红书收藏"
 DIARY_ROOT = OBSIDIAN_VAULT / "日记"
 
-DEEPTUTOR_DB = Path(r"D:\record\deeptutor\data\user\chat_history.db")
-DEEPTUTOR_LOG = Path(r"D:\record\deeptutor\data\user\logs\deeptutor.jsonl")
+DEEPTUTOR_DB = DEEPTUTOR_DIR / "chat_history.db"
+DEEPTUTOR_LOG = DEEPTUTOR_DIR / "logs" / "deeptutor.jsonl"
 
 SERVER_PORT = HUB_PORT
 
@@ -696,7 +698,7 @@ from logging_setup import build_log_config
 from hub.openmaic import router as openmaic_router
 app.include_router(openmaic_router)
 
-HUB_WEB = APP_ROOT / "server" / "hub_web"
+HUB_WEB = HUB_ROOT / "server" / "hub_web"
 if not HUB_WEB.exists() and getattr(sys, "frozen", False):
     # PyInstaller 打包运行时：磁盘路径缺失时回退到包内资源（hub_web 随 --add-data 打入）
     HUB_WEB = Path(sys._MEIPASS) / "hub_web"
@@ -733,7 +735,7 @@ def hub_assets(path: str):
 
 # ------------------------------------------------ 新版单 App（Vue SPA，web/ 构建产物）
 # 三 Tab 合一：学习中枢 / 题库 / 工作台，hash 路由，同时供 Web 与 APK(file://) 使用
-APP_DIST = APP_ROOT / "server" / "web_dist" / "app"
+APP_DIST = HUB_ROOT / "server" / "web_dist" / "app"
 if not APP_DIST.exists() and getattr(sys, "frozen", False):
     APP_DIST = Path(sys._MEIPASS) / "web_dist" / "app"
 
@@ -1391,7 +1393,7 @@ def start_udp_broadcast(port: int, name: str) -> None:
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-                s.sendto(msg, ("255.255.255.255", 8638))
+                s.sendto(msg, ("255.255.255.255", UDP_PORT))
                 s.close()
             except Exception:
                 pass

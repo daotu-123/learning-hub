@@ -12,7 +12,10 @@ import datetime
 from pathlib import Path
 from typing import List, Dict, Optional
 
-HERMES_SCRIPTS = Path(r"E:\soft_files\tools\hermes-scripts")
+# M1a：hermes 账本目录改由 config 单一来源（原为本文件硬编码，与 vault_reader 两处重复）
+from config import HERMES_DIR
+
+HERMES_SCRIPTS = HERMES_DIR
 
 
 def _load(name: str) -> Optional[Dict]:

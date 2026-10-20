@@ -20,9 +20,13 @@ SERVER_DIR = Path(__file__).resolve().parent.parent
 HARDCODED = {
     "host": "0.0.0.0",
     "port": "8637",
+    "root": r"E:\agent\androd-app",
     "vault": r"E:\soft_files\obsidian-files\self-improve\self-improve",
     "favorites": r"E:\soft_files\obsidian-files\depot\class",
+    "hermes": r"E:\soft_files\tools\hermes-scripts",
+    "deeptutor": r"D:\record\deeptutor\data\user",
     "data": r"E:\agent\androd-app\server\data",
+    "udp_port": "8638",
 }
 
 
@@ -33,8 +37,10 @@ def _config_env(extra: dict) -> dict:
         + "".join(f"os.environ[{k!r}]={v!r};" for k, v in extra.items())
         + "import config;"
         "print(json.dumps({'host':config.HUB_HOST,'port':config.HUB_PORT,"
-        "'vault':str(config.OBSIDIAN_VAULT),'fav':str(config.FAVORITES_ROOT),"
-        "'data':str(config.DATA_DIR),'token':config.HUB_AUTH_TOKEN}))"
+        "'root':str(config.HUB_ROOT),'vault':str(config.OBSIDIAN_VAULT),"
+        "'fav':str(config.FAVORITES_ROOT),'hermes':str(config.HERMES_DIR),"
+        "'deeptutor':str(config.DEEPTUTOR_DIR),'data':str(config.DATA_DIR),"
+        "'udp':config.UDP_PORT,'token':config.HUB_AUTH_TOKEN}))"
     )
     out = subprocess.run(
         [sys.executable, "-c", code],
@@ -50,24 +56,34 @@ def test_defaults_equal_hardcoded():
 
     assert config.HUB_HOST == HARDCODED["host"]
     assert config.HUB_PORT == int(HARDCODED["port"])
+    assert str(config.HUB_ROOT) == HARDCODED["root"]
     assert str(config.OBSIDIAN_VAULT) == HARDCODED["vault"]
     assert str(config.FAVORITES_ROOT) == HARDCODED["favorites"]
+    assert str(config.HERMES_DIR) == HARDCODED["hermes"]
+    assert str(config.DEEPTUTOR_DIR) == HARDCODED["deeptutor"]
     assert str(config.DATA_DIR) == HARDCODED["data"]
+    assert config.UDP_PORT == int(HARDCODED["udp_port"])
     assert config.HUB_AUTH_TOKEN == ""      # 空 = 沿用 settings.json 惰性生成
 
 
 def test_defaults_unchanged_with_clean_env():
     """显式清空相关环境变量后再加载一遍，确认没有隐性依赖。"""
     clean = {k: "" for k in (
-        "HUB_HOST", "HUB_PORT", "HUB_VAULT", "HUB_FAVORITES", "HUB_DATA_DIR", "HUB_AUTH_TOKEN",
+        "HUB_HOST", "HUB_PORT", "HUB_ROOT", "HUB_VAULT", "HUB_FAVORITES",
+        "HUB_HERMES_DIR", "HUB_DEEPTUTOR_DIR", "HUB_DATA_DIR", "HUB_UDP_PORT",
+        "HUB_AUTH_TOKEN",
     )}
     got = _config_env(clean)
     assert got == {
         "host": HARDCODED["host"],
         "port": int(HARDCODED["port"]),
+        "root": HARDCODED["root"],
         "vault": HARDCODED["vault"],
         "fav": HARDCODED["favorites"],
+        "hermes": HARDCODED["hermes"],
+        "deeptutor": HARDCODED["deeptutor"],
         "data": HARDCODED["data"],
+        "udp": int(HARDCODED["udp_port"]),
         "token": "",
     }
 
@@ -118,30 +134,75 @@ def test_port_single_source():
     assert r.HUB_PORT == config.HUB_PORT
 
 
+def test_hermes_dir_single_source():
+    """vault_reader 与 queue_reader 必须共用同一个 hermes 目录对象。"""
+    import config
+    import hub.queue_reader as qr
+    import hub.vault_reader as vr
+
+    assert vr.HERMES_SCRIPTS is config.HERMES_DIR
+    assert qr.HERMES_SCRIPTS is config.HERMES_DIR
+
+
+def test_deeptutor_paths_derive_from_config():
+    import config
+    import main
+
+    assert main.DEEPTUTOR_DB == config.DEEPTUTOR_DIR / "chat_history.db"
+    assert main.DEEPTUTOR_LOG == config.DEEPTUTOR_DIR / "logs" / "deeptutor.jsonl"
+
+
+def test_udp_port_from_config():
+    import config
+    import main
+    import inspect
+
+    src = inspect.getsource(main)
+    assert "UDP_PORT" in src, "UDP 广播应使用 config.UDP_PORT，不该再写死 8638"
+    assert "255.255.255.255\", 8638)" not in src
+    assert config.UDP_PORT == 8638
+
+
 # ---------------- 环境变量覆盖 ----------------
 
 def test_env_overrides():
     got = _config_env({
         "HUB_HOST": "127.0.0.1",
         "HUB_PORT": "8641",
+        "HUB_ROOT": r"D:\deploy\hub",
         "HUB_VAULT": r"D:\tmp\vault",
         "HUB_FAVORITES": r"D:\tmp\fav",
+        "HUB_HERMES_DIR": r"D:\tmp\hermes",
+        "HUB_DEEPTUTOR_DIR": r"D:\tmp\deeptutor",
         "HUB_DATA_DIR": r"D:\tmp\data",
+        "HUB_UDP_PORT": "9999",
         "HUB_AUTH_TOKEN": "tok-from-env",
     })
     assert got["host"] == "127.0.0.1"
     assert got["port"] == 8641
+    assert got["root"] == r"D:\deploy\hub"
     assert got["vault"] == r"D:\tmp\vault"
     assert got["fav"] == r"D:\tmp\fav"
+    assert got["hermes"] == r"D:\tmp\hermes"
+    assert got["deeptutor"] == r"D:\tmp\deeptutor"
     assert got["data"] == r"D:\tmp\data"
+    assert got["udp"] == 9999
     assert got["token"] == "tok-from-env"
 
 
 def test_blank_env_falls_back_to_default():
     """空串 / 纯空白视为未设置，不能把端口变成空串。"""
-    got = _config_env({"HUB_PORT": "   ", "HUB_VAULT": ""})
+    got = _config_env({"HUB_PORT": "   ", "HUB_VAULT": "", "HUB_ROOT": " "})
     assert got["port"] == 8637
     assert got["vault"] == HARDCODED["vault"]
+    assert got["root"] == HARDCODED["root"]
+
+
+def test_hub_root_drives_data_dir_default():
+    """VPS 场景：只设 HUB_ROOT，data 目录要跟着走（DATA_DIR 缺省值由 HUB_ROOT 派生）。"""
+    got = _config_env({"HUB_ROOT": r"D:\deploy\hub"})
+    assert got["root"] == r"D:\deploy\hub"
+    assert got["data"] == r"D:\deploy\hub\server\data"
 
 
 def test_bad_port_raises_instead_of_silently_defaulting():
