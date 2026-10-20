@@ -84,108 +84,6 @@ def parse_frontmatter(text: str) -> dict:
     return meta
 
 
-# ---------------------------------------------------------------- favorites
-_cache = {"ts": 0.0, "data": None}
-CACHE_TTL = 120.0   # 秒
-INDEX_JSON = DATA_DIR / "favorites_index.json"
-SCAN_LOCK = threading.Lock()
-
-
-def _read_head(p: Path, size: int = 2048) -> str:
-    """只读文件头(覆盖 frontmatter), 避免全量读大文件"""
-    try:
-        with open(p, "rb") as fh:
-            raw = fh.read(size)
-        return raw.decode("utf-8", errors="ignore")
-    except Exception:
-        return ""
-
-
-def scan_favorites(force: bool = False) -> dict:
-    """扫描抖音 + 小红书收藏, 返回 {date: {platform: [items]}}; 带持久化缓存"""
-    now = time.time()
-    if not force and _cache["data"] and now - _cache["ts"] < CACHE_TTL:
-        return _cache["data"]
-    with SCAN_LOCK:
-        # 双检: 等待锁期间可能已被刷新
-        if not force and _cache["data"] and now - _cache["ts"] < CACHE_TTL:
-            return _cache["data"]
-        result = {}
-
-        def add_item(date_key, platform, item):
-            result.setdefault(date_key, {}).setdefault(platform, []).append(item)
-
-        # 抖音: 抖音收藏/{主题}/*.md  frontmatter.observed_at (UTC)
-        if DOUYIN_DIR.exists():
-            for f in DOUYIN_DIR.glob("*/*.md"):
-                text = _read_head(f)
-                meta = parse_frontmatter(text)
-                dt = _utc_to_local(meta.get("observed_at", ""))
-                if dt is None:
-                    continue
-                date_key = dt.strftime("%Y-%m-%d")
-                add_item(date_key, "douyin", {
-                    "id": meta.get("aweme_id", f.stem),
-                    "title": meta.get("title", f.stem)[:120],
-                    "author": meta.get("author", ""),
-                    "url": meta.get("source_url", ""),
-                    "collected_at": dt.isoformat(timespec="seconds"),
-                    "category": f.parent.name,
-                    "note_path": str(f).replace(str(OBSIDIAN_VAULT), "").lstrip("\\/"),
-                })
-
-        # 小红书: 小红书收藏/{一级}/{二级}/*.md  frontmatter.collected_at (本地时区)
-        if XHS_DIR.exists():
-            for f in XHS_DIR.glob("*/*/*.md"):
-                text = _read_head(f)
-                meta = parse_frontmatter(text)
-                dt = _utc_to_local(meta.get("collected_at", ""))
-                if dt is None:
-                    continue
-                date_key = dt.strftime("%Y-%m-%d")
-                add_item(date_key, "xiaohongshu", {
-                    "id": meta.get("note_id", f.stem),
-                    "title": meta.get("title", f.stem)[:120],
-                    "author": meta.get("author", ""),
-                    "url": meta.get("url", ""),
-                    "collected_at": dt.isoformat(timespec="seconds"),
-                    "category": meta.get("category", f.parent.parent.name),
-                    "subcategory": meta.get("subcategory", f.parent.name),
-                    "note_path": str(f).replace(str(XHS_DIR), "").lstrip("\\/"),
-                })
-
-        _cache["ts"] = now
-        _cache["data"] = result
-        try:
-            INDEX_JSON.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
-        except Exception:
-            pass
-        return result
-
-
-def load_index_on_start() -> dict:
-    """启动时加载持久化索引, 避免冷启动全量扫描阻塞"""
-    if INDEX_JSON.exists():
-        try:
-            data = json.loads(INDEX_JSON.read_text(encoding="utf-8"))
-            _cache["data"] = data
-            _cache["ts"] = time.time()
-            return data
-        except Exception:
-            pass
-    return {}
-
-
-def background_refresh(interval: float = 300.0):
-    """后台线程: 每 interval 秒全量重扫一次收藏"""
-    while True:
-        try:
-            time.sleep(interval)
-            scan_favorites(force=True)
-        except Exception:
-            time.sleep(30)
-
-
 # ---------------------------------------------------------------- settings
 def get_settings() -> dict:
     if SETTINGS_JSON.exists():
@@ -390,17 +288,18 @@ app.include_router(openmaic_router)
 # 必须保持 static_pages 在 tasks 之前、docs 在 favorites 之前……
 # 尤其 /hub 要早于 /hub/{path:path}、/app 要早于 /app/{path:path}
 # （两者都在 static_pages 内，文件内顺序已锁，见 tests/test_routers.py）。
-from routers import static_pages, tasks, legacy_life, docs
+from routers import static_pages, tasks, legacy_life, docs, favorites
 
 app.include_router(static_pages.router)
 app.include_router(tasks.router)
 app.include_router(legacy_life.router)
 app.include_router(docs.router)
+app.include_router(favorites.router)
 
-# /api/summary 与 _build_context 暂留 main.py（分属 favorites / ai 域，下一步搬），
-# 它们复用 docs 域的数据访问函数，从这里导入，避免中间状态出现 NameError。
-from routers.docs import (deeptutor_daily, deeptutor_notes, diary_sync_state,
-                          doc_read)
+# /api/summary 已随 favorites 域搬走；_build_context 暂留 main.py（属 ai 域，下一步搬），
+# 它复用 favorites / docs / usage / pomodoro / legacy_life 域的数据访问函数，从这里导入，
+# 避免中间状态出现 NameError。
+from routers.favorites import scan_favorites
 
 
 LAN_IP = None
@@ -408,7 +307,9 @@ LAN_IP = None
 
 @app.on_event("startup")
 def _startup():
-    """冷启动: 加载持久化索引 + 启动后台刷新线程"""
+    """冷启动: 加载持久化索引 + 启动后台刷新线程（实现在 favorites 域）"""
+    from routers.favorites import background_refresh, load_index_on_start
+
     load_index_on_start()
     t = threading.Thread(target=background_refresh, daemon=True)
     t.start()
@@ -422,43 +323,6 @@ def root():
         "lan_ip": LAN_IP, "port": SERVER_PORT,
         "tailscale_ip": find_tailscale_ip(),
     }
-
-
-@app.get("/api/summary")
-def summary(date: str = Query(default_factory=lambda: datetime.date.today().isoformat())):
-    favs = scan_favorites()
-    day_favs = favs.get(date, {})
-    dt = deeptutor_daily(date)
-    ds = diary_sync_state(date)
-    con = _usage_conn()
-    con.row_factory = sqlite3.Row
-    usage_rows = con.execute(
-        "SELECT COUNT(*) AS n, COALESCE(SUM(day_ms),0) AS ms FROM usage WHERE date=?", (date,)
-    ).fetchone()
-    con.close()
-    return {
-        "date": date,
-        "favorites": {
-            "douyin": len(day_favs.get("douyin", [])),
-            "xiaohongshu": len(day_favs.get("xiaohongshu", [])),
-        },
-        "deeptutor": {"ok": dt["ok"], "sessions": len(dt["sessions"]),
-                      "messages": dt["messages"], "log_events": dt["log_events"],
-                      "notes": {k: len(v) for k, v in deeptutor_notes(date).items()}},
-        "diary": {"exists": ds["exists"], "mtime": ds["mtime"]},
-        "usage": {"apps": usage_rows["n"], "total_ms": usage_rows["ms"]},
-    }
-
-
-@app.get("/api/favorites")
-def favorites(date: str = Query(default_factory=lambda: datetime.date.today().isoformat()),
-              platform: Optional[str] = None):
-    favs = scan_favorites()
-    day_favs = favs.get(date, {})
-    if platform:
-        return {"date": date, "platform": platform, "items": day_favs.get(platform, [])}
-    return {"date": date, "douyin": day_favs.get("douyin", []),
-            "xiaohongshu": day_favs.get("xiaohongshu", [])}
 
 
 @app.get("/api/usage")
