@@ -685,6 +685,10 @@ app.include_router(hub_router)
 from health import router as health_router
 app.include_router(health_router)
 
+# 统一错误响应（M1a-C）：只新增 error 形状，保留既有 detail 字段
+from errors import register as register_error_handlers
+register_error_handlers(app)
+
 # Learning Hub: OpenMAIC AI 课堂（/api/hub/openmaic/*）
 from hub.openmaic import router as openmaic_router
 app.include_router(openmaic_router)
