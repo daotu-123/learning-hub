@@ -36,7 +36,7 @@ from config import DATA_DIR
 SETTINGS_JSON = DATA_DIR / "settings.json"
 WALLPAPER_DIR = DATA_DIR / "wallpapers"
 WALLPAPER_DIR.mkdir(parents=True, exist_ok=True)
-USAGE_DB = DATA_DIR / "usage.db"   # 工作台 SQLite（pomodoro 表）
+USAGE_DB = config.USAGE_DB   # 工作台 SQLite（pomodoro 表）
 
 # 网页热更新源（单 App：web_dist/app 与 APK assets/www 同构；VERSION 为整数版本号）
 WEB_ROOT = Path(r"E:\agent\androd-app\server\web_dist")

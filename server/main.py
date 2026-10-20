@@ -36,11 +36,11 @@ from config import (
     HUB_PORT,
     OBSIDIAN_VAULT,
     PROJECT_ROOT as APP_ROOT,
+    USAGE_DB,
 )
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-USAGE_DB = DATA_DIR / "usage.db"
 SETTINGS_JSON = DATA_DIR / "settings.json"
 
 DOUYIN_DIR = OBSIDIAN_VAULT / "抖音收藏"
@@ -680,6 +680,10 @@ async def auth_guard(request: Request, call_next):
 # Learning Hub 只读中枢（/api/hub/* + /hub 页面）
 from hub.router import router as hub_router, find_tailscale_ip
 app.include_router(hub_router)
+
+# 健康检查（/health/live、/health/ready）——在 /api/ 之外，不进鉴权中间件
+from health import router as health_router
+app.include_router(health_router)
 
 # Learning Hub: OpenMAIC AI 课堂（/api/hub/openmaic/*）
 from hub.openmaic import router as openmaic_router

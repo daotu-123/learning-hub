@@ -49,6 +49,7 @@ HUB_PORT = _env_int("HUB_PORT", "8637")
 # ---------------------------------------------------------------- 数据落点
 # 原 main.py:31 / hub/router.py:31 / hub/openmaic.py:33 / hub/writer.py:26
 DATA_DIR = _env_path("HUB_DATA_DIR", str(PROJECT_ROOT / "server" / "data"))
+USAGE_DB = DATA_DIR / "usage.db"     # 原 main.py:34 / hub/router.py:35
 
 # ---------------------------------------------------------------- Obsidian vault
 # 原 main.py:37、hub/vault_reader.py:16、hub/openmaic.py:42（三处重复 → 现在同一来源）
