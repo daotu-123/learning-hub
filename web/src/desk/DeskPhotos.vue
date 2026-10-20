@@ -31,6 +31,9 @@ defineOptions({ name: 'DeskPhotos' })
 const fileInput = ref<HTMLInputElement>()
 
 function photoUrl(url: string) {
+  // M2c-P3：服务端给的 url 形如 /photos/2026-08/x.jpg?sig=…&exp=…
+  // 它是**相对路径**（因为服务端不知道前端从哪个 origin 访问），
+  // 这里只补服务器前缀，**绝不追加任何令牌**——签名本身就是凭据。
   return s.server.replace(/\/+$/, '') + url
 }
 function open(url: string) { window.open(photoUrl(url)) }

@@ -39,6 +39,7 @@ from auth_sessions import (
 # clientip 不 import ratelimit，两者各自独立，方便测试单独构造实例。
 from ratelimit import LIMITER, is_upload_path, retry_after
 from clientip import is_loopback, request_client_ip
+import media_sign
 
 # 上面这 4 个（socket / time / sys / uvicorn）只在 `if __name__ == "__main__":` 块
 # 及其派生的线程函数（UDP 广播 loop、_open_browser）里被用到。M1b-2 拆 routers 时
@@ -75,6 +76,13 @@ AUTH_TOKEN_ENV = "WORKBENCH_AUTH_TOKEN"
 #  - /api/auth/token：仅回环可读，桌面端用它把令牌抄到手机上
 #  - /api/auth/login：登录入口本身就是"还没有令牌"时调用的
 AUTH_EXEMPT_API = {"/api/hub/netinfo", "/api/auth/token", "/api/auth/login"}
+
+# M2c-P3：需要鉴权但**不以 /api/ 开头**的媒体前缀。
+# 这三条历史上完全裸奔（auth_guard 只看 /api/），局域网任何设备都能读照片。
+# 判定顺序刻意放在「回环豁免」**之后**：
+#   桌面端本机预览照片/日记图片仍免令牌（回环豁免覆盖全部路径，含媒体）；
+#   非回环则必须带凭据头（会话 Bearer / 旧 X-Token）或有效短时签名 URL。
+MEDIA_PREFIXES = ("/img/", "/photos/", "/api/hub/wallpapers/")
 
 
 def _loopback(host: str) -> bool:
@@ -179,7 +187,7 @@ async def rate_limit_guard(request: Request, call_next):
     + Retry-After 头。401 的字面量一个字没动。
     """
     path = request.url.path
-    if not path.startswith("/api/"):
+    if not path.startswith("/api/") and not path.startswith(MEDIA_PREFIXES):
         return await call_next(request)
     host = request.client.host if request.client else ""
     if _loopback(host):
@@ -220,6 +228,7 @@ async def auth_guard(request: Request, call_next):
 
     判定顺序（owner 2026-10-20 定）：
         1) 非 /api/ 路径（静态页面与资源）——不校验，否则页面本身打不开
+           **M2c-P3 例外**：MEDIA_PREFIXES 里的媒体路径同样要校验
         2) 豁免清单 AUTH_EXEMPT_API（netinfo / auth/token / login）
         3) 回环豁免——本机桌面端体验不变
     2) 与 3) 都是"直接放行"，先后无所谓，这里按 owner 给的顺序写。
@@ -227,11 +236,16 @@ async def auth_guard(request: Request, call_next):
     双轨的意义：旧共享令牌必须继续有效，直到新版 APK 铺开（覆盖一个版本周期）。
     两套凭据互不干扰——会话令牌只认头，共享令牌还认 query。
 
+    M2c-P3 新增第三轨：媒体短时签名（?sig=…&exp=…）。
+    只对 MEDIA_PREFIXES 生效，且**放在凭据头之后**——
+    带会话的请求本来就该走会话，没必要额外签发；签名只服务"无法带头的 <img>"。
+
     401 的响应体**与 legacy 逐字节一致**（auth_sessions.UNAUTHORIZED_BODY）——
     改一个字前端就可能退化，所以抽成常量由两处共用，从根上杜绝写法漂移。
     """
     path = request.url.path
-    if not path.startswith("/api/"):
+    is_media = path.startswith(MEDIA_PREFIXES)
+    if not path.startswith("/api/") and not is_media:
         return await call_next(request)
     host = request.client.host if request.client else ""
     if _loopback(host):
@@ -247,6 +261,12 @@ async def auth_guard(request: Request, call_next):
     session = session_token_from_request(request)
     if session and validate_session(session):
         return await call_next(request)
+    # 第三轨（M2c-P3）：媒体短时签名。URL 里只有 sig + exp，**没有会话令牌**。
+    if is_media:
+        sig = request.query_params.get("sig")
+        exp = request.query_params.get("exp")
+        if media_sign.verify(path, exp, sig):
+            return await call_next(request)
     return unauthorized_response()
 
 

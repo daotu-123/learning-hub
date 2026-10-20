@@ -253,7 +253,8 @@ def test_no_v1_routes_and_count_matches_baseline(app):
     from dump_routes import dump
 
     rows = dump(app)
-    assert len(rows) == 77, "路由条数变化了：%d（预期 77 = 73 基线 + 4 个身份端点）" % len(rows)
+    # 73 基线 + M2a 的 4 个身份端点 + M2c-P3 的 1 个媒体签名端点
+    assert len(rows) == 78, "路由条数变化了：%d（预期 78 = 73 基线 + 4 身份端点 + 1 媒体签名）" % len(rows)
     v1_rows = [(m, p) for m, p in rows if p.startswith(API_V1)]
     assert not v1_rows, "出现了 /api/v1 路由，说明退化成了路由级别名：%r" % (v1_rows,)
 

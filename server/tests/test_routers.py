@@ -69,6 +69,8 @@ EXPECTED_OWN = [
     ("POST", "/api/photo/upload"),
     ("GET", "/api/photos"),
     ("GET", "/photos/{month}/{name}"),
+    # M2c-P3：媒体签名下发（把规范化路径换成 ?sig=&exp= 的短时签名 URL）
+    ("POST", "/api/media/sign"),
     # ai
     ("POST", "/api/ai/chat"),
     ("GET", "/api/ai/context"),
@@ -112,12 +114,15 @@ def test_root_route_is_last(all_routes):
 
 
 def test_total_route_count(all_routes):
-    """基线 73 条（M1b-2 拆分后）；M2a 加了 4 个身份端点 → 77 条。
+    """基线 73 条（M1b-2 拆分后）
+    → M2a 加 4 个身份端点 = 77
+    → M2c-P3 加 1 个媒体签名端点 = 78
 
     任何增删路由都会走到这里。如果是故意改的，请同步更新本断言与 EXPECTED_OWN。
     """
-    assert len(all_routes) == 77, (
-        f"路由条数变了: {len(all_routes)}（期望 77 = 基线 73 + M2a 的 4 个身份端点）。"
+    assert len(all_routes) == 78, (
+        f"路由条数变了: {len(all_routes)}（期望 78 = 基线 73 + M2a 的 4 个身份端点 "
+        f"+ M2c-P3 的 1 个媒体签名端点）。"
         f"新增/删除路由都会走到这里，如果是故意改的，请同步更新本断言与 EXPECTED_OWN。"
     )
 

@@ -221,6 +221,13 @@ export async function syncAll() {
   await refreshSummary()
   await refreshFavorites()
   await refreshHealth()
+  // M2c-P3：照片也归到「连上之后统一刷新」这一层。
+  // 原因：loadPhotos() 以 sync.online 为门槛（离线时不发请求），
+  // 而 online 要等 checkConnection() 异步返回后才置 true。
+  // 照片页的 onMounted 早于那一刻 → 直接进 loadPhotos() 会被门槛挡掉且**永不重试**，
+  // 表现为「照片页永远是空的」。之前没暴露是因为回环访问下 server 为空、
+  // 走的另一条分支；LAN/公网场景必现。这里补一次刷新，与其它资源同一时机。
+  await loadPhotos()
 }
 
 /* ---------------- 概览 ---------------- */
@@ -502,6 +509,56 @@ const IMG_EXTS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp']
 function imgUrl(rel: string): string {
   return state.server.replace(/\/+$/, '') + '/img/' + rel.split('/').map(encodeURIComponent).join('/')
 }
+
+/* M2c-P3：/img/* 与 /photos/* 已纳入服务端鉴权，而 <img src> 无法带 Authorization 头。
+   所以走「短时签名 URL」：把规范化路径批量发给 /api/media/sign 换签名，
+   签名 URL 里只有 sig + exp，**绝不出现会话令牌**。
+   为什么不用 fetch+Blob：日记图片可能几十上百张，全量预下载会让 loading="lazy"
+   失效、首屏内存不可控；签名 URL 保留浏览器原生懒加载与缓存。 */
+const signedCache = new Map<string, { url: string; expires_at: number }>()
+const SIGN_REFRESH_MARGIN = 20 * 1000   // 提前 20s 续签，避免图在加载途中过期
+
+/** 规范化媒体路径（前端内部用这个当 key）。 */
+export function mediaPath(path: string): string {
+  if (path.indexOf('/img/') === 0 || path.indexOf('/photos/') === 0 || path.indexOf('/api/hub/wallpapers/') === 0) {
+    return path
+  }
+  return '/img/' + path
+}
+
+/** 批量换签名 URL。返回 {规范化路径: 签名URL}。
+ *  服务端一次最多 200 条，这里同样按 200 切片。 */
+export async function signMedia(paths: string[]): Promise<Record<string, string>> {
+  const want = paths.filter((p) => {
+    const hit = signedCache.get(p)
+    return !hit || hit.expires_at * 1000 - Date.now() < SIGN_REFRESH_MARGIN
+  })
+  const out: Record<string, string> = {}
+  // 先把仍然有效的缓存填进结果，避免重复请求
+  for (const p of paths) {
+    const hit = signedCache.get(p)
+    if (hit && hit.expires_at * 1000 - Date.now() >= SIGN_REFRESH_MARGIN) out[p] = hit.url
+  }
+  for (let i = 0; i < want.length; i += 200) {
+    const batch = want.slice(i, i + 200)
+    if (!batch.length) continue
+    try {
+      const r: any = await api('/api/media/sign', { method: 'POST', body: JSON.stringify({ paths: batch }) })
+      ;(r.items || []).forEach((it: any, idx: number) => {
+        const p = batch[idx]
+        if (!p || !it) return
+        signedCache.set(p, { url: it.url, expires_at: it.expires_at })
+        out[p] = it.url
+      })
+    } catch (e) { /* noop：签名失败就退回无签名，图片会 401，但页面不至于崩 */ }
+  }
+  return out
+}
+
+export async function signMediaOne(path: string): Promise<string> {
+  const r = await signMedia([path])
+  return r[path] || ''
+}
 function extractDiaryImages(text: string): string[] {
   const out: string[] = []
   const re = /!\[\[([^\]]+)\]\]/g
@@ -515,10 +572,28 @@ function extractDiaryImages(text: string): string[] {
   }
   return out
 }
+/** 批量为日记图片换签名 URL（渲染前调用）。 */
+export async function signDiaryImgs() {
+  const paths = state.diaryImgs.map(mediaPath)
+  if (!paths.length) return
+  const signed = await signMedia(paths)
+  diaryImgSigned.value = signed
+}
+
+/** 日记图片的**已签名** URL；没签到就临时回退（会 401，但不至于裂图占位）。 */
+const diaryImgSigned = ref<Record<string, string>>({})
+export const diarySignedUrls = readonly(diaryImgSigned)
+
 export function renderDiaryImgs() {
   state.diaryImgs = extractDiaryImages(state.diaryContent)
+  // 图片集合变了就重新换签名；不 await 是为了不阻塞正文渲染，
+  // 签好后 diaryImgUrl 会自动给出新 URL。
+  signDiaryImgs().catch(() => { /* noop */ })
 }
-export function diaryImgUrl(rel: string) { return imgUrl(rel) }
+export function diaryImgUrl(rel: string) {
+  const p = mediaPath(rel)
+  return diaryImgSigned.value[p] || imgUrl(rel)
+}
 export function insertAtCursorInDiary(text: string) {
   state.diaryContent = state.diaryContent + text
   renderDiaryImgs()
@@ -811,6 +886,8 @@ export async function loadPhotos() {
   }
   try {
     const d = await api('/api/photos')
+    // M2c-P3：服务端返回的 url 已经是**带签名**的完整路径（含 sig/exp），
+    // 前端不再拼 server，也绝不往里塞令牌。
     const photos = d.photos || []
     state.photoCount = photos.length + ' 张'
     state.photos = photos
