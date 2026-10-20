@@ -190,12 +190,158 @@ npm run test:auth             # 身份链路验收：login → me(200) → logou
 | `HUB_UDP_PORT` | 局域网自动发现广播端口 | `8638` |
 | `HUB_AUTH_TOKEN` | 访问令牌（可选，覆盖 settings.json 中的值） | 空 = 惰性生成 |
 
+M2c 新增的安全相关变量（详见下文「反向代理与公网部署」）：
+`HUB_TRUSTED_PROXIES`、`HUB_API_LIMIT_PER_MIN`、`HUB_API_BURST`、
+`HUB_UPLOAD_LIMIT_PER_MIN`、`HUB_UPLOAD_BURST`、`HUB_LOGIN_MAX_FAILURES`、
+`HUB_LOGIN_BASE_DELAY`、`HUB_LOGIN_MAX_DELAY`、`HUB_LOGIN_WINDOW`。
+
 > 缺省值是**作者本机目录**，只为「克隆下来直接能跑」。部署到其它机器（尤其 VPS）时
 > 必须用环境变量覆盖，否则数据会写到不存在的路径。例：
 >
 > ```bash
 > HUB_PORT=8637 HUB_VAULT=/srv/notes HUB_FAVORITES=/srv/favorites python main.py
 > ```
+
+## 反向代理与公网部署
+
+本节是把服务放到公网（VPS + 域名 + TLS）时**必须逐条落实**的东西。
+M2c 的安全硬化（限流、登录退避、媒体鉴权、CSP）让公网暴露成为可能，
+但下面这几条代理侧的配合**代码里管不了**，漏一条等于前面的防护被绕过。
+
+### 1. TLS 必须在代理层 terminates
+
+服务端只说 HTTP，**不做 TLS**。证书与私钥放在代理上：
+
+- Caddy：直接写站点块，自动签发证书，**必须显式设置 `reverse_proxy` 头**（见下）
+- Nginx：`certbot` 签发，`ssl_certificate` / `ssl_certificate_key` 挂载
+
+对外只开 443，**不要把 8637 直接暴露到公网**。若必须直连，则用防火墙
+（`ufw` / 安全组）把 8637 限制到 `127.0.0.1`，只允许代理访问。
+
+### 2. Host 与 X-Forwarded-For（最容易配错的一条）
+
+限流按来源 IP 计（`server/clientip.py`）。**代理不转发真实 IP，限流就退化成
+"所有人共用一个配额"** —— 一台 NAT 后面的全部用户会互相触发限流；
+反过来若采信了伪造的 XFF，则限流可被一条头绕过。
+
+**默认不信任任何代理**（`HUB_TRUSTED_PROXIES` 为空 = 完全忽略 XFF）。
+放到反代后面必须显式列出代理地址，多个用逗号分隔，支持 CIDR：
+
+```bash
+HUB_TRUSTED_PROXIES=127.0.0.1,10.0.0.0/8
+```
+
+代理侧（Caddy）：
+
+```caddyfile
+example.com {
+    reverse_proxy 127.0.0.1:8637 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}   # 注意：不是 {http.request.header.X-Forwarded-For}
+    }
+}
+```
+
+> `{remote_host}` 是**连接来源 IP**。若写成
+> `{http.request.header.X-Forwarded-For}`，等于把客户端可控的头原样透传，
+> 攻击者可以随便填 IP 绕过限流。Caddy 的 `{client_ip}` 在有可信代理链时更稳。
+
+Nginx：
+
+```nginx
+proxy_set_header Host              $host;
+proxy_set_header X-Real-IP         $remote_addr;
+proxy_set_header X-Forwarded-For   $remote_addr;   # 用 $proxy_add_x_forwarded_for 之前先确认代理链可信
+proxy_set_header X-Forwarded-Proto $scheme;
+```
+
+采信规则（`clientip.py`）：仅当直连来源在受信列表内才读 XFF，
+并从右往左取**第一个非受信**地址；全受信则取最左。**绝不对主机名做 DNS 解析**
+（那会把控制面交给攻击者的 DNS）。
+
+### 3. 限流阈值（默认值请按自己的场景确认）
+
+M2c 起的全部阈值都可用环境变量覆盖；**下面的值是作者按单人使用场景给的建议值，
+不是拍脑袋的通用值**：
+
+| 变量 | 默认 | 含义 |
+|---|---|---|
+| `HUB_API_LIMIT_PER_MIN` | `120` | 单 IP 每分钟 API 请求数 |
+| `HUB_API_BURST` | `60` | 令牌桶容量，允许的突发量 |
+| `HUB_UPLOAD_LIMIT_PER_MIN` | `12` | 单 IP 每分钟上传次数 |
+| `HUB_UPLOAD_BURST` | `4` | 上传突发容量 |
+| `HUB_LOGIN_MAX_FAILURES` | `5` | 连续失败多少次后开始退避 |
+| `HUB_LOGIN_BASE_DELAY` | `1` | 退避基数（秒），实际按 `base × 2^n` 递增 |
+| `HUB_LOGIN_MAX_DELAY` | `60` | 退避上限（秒） |
+| `HUB_LOGIN_WINDOW` | `900` | 失败计数窗口（秒），超窗清零 |
+
+另有 `HUB_TRUSTED_PROXIES`（见上）。调整阈值的判断依据：
+桌面端是长轮询型客户端，`120/min` 相当于每秒 2 次，正常使用远达不到；
+上传 `12/min` 是为了压住扫描器批量写文件。**若自架服务器还挂了别的客户端
+（同一条 NAT 下的多台设备），必须调大 `HUB_API_LIMIT_PER_MIN`，否则会被自己人限死。**
+
+回环（`127.0.0.1` / `::1`）**始终豁免**：本机桌面端不该被自己的限流打死。
+
+> ⚠️ **多 worker 必须换外部存储**：限流计数与登录退避都放在**进程内存**里
+> （`server/ratelimit.py`）。当前部署是单进程（`python main.py` / uvicorn 单 worker），
+> 所以够用。一旦改成 `--workers N`，每个进程各有一份计数 → 实际阈值放大 N 倍，
+> 登录退避也会被 N 个进程分摊而形同虚设。真要多 worker，得把这两个状态换成
+> Redis 之类的外部存储，再谈公网。
+
+### 4. secret 存放在哪
+
+| 秘密 | 位置 | 说明 |
+|---|---|---|
+| 访问令牌 | `HUB_AUTH_TOKEN` 或 `server/data/settings.json` | 双轨凭据之一 |
+| 口令哈希 | `server/data/account.json` | **只有 Argon2id 哈希**，无明文 |
+| 会话 | `server/data/sessions.json` | 改口令即全部失效 |
+| 媒体签名密钥 | `server/data/media_url_secret` | 惰性生成（32 字节随机），**不入仓库** |
+
+`server/data/` 已在 `.gitignore` 内。**部署到 VPS 时**：
+
+```bash
+chmod 700 /srv/learninghub/server/data
+chmod 600 /srv/learninghub/server/data/settings.json /srv/learninghub/server/data/account.json
+```
+
+媒体签名 URL 的 TTL 硬上限 300 秒（`server/media_sign.py`），签名绑定路径与
+过期时间，URL 里**只有 `sig` 与 `exp`，绝不含会话令牌**；日志中 `token` / `sig`
+已做打码（`server/logging_setup.py`）。
+
+### 5. 上线前自查
+
+- [ ] 8637 未直接对公网开放，只允许代理访问
+- [ ] 域名有 TLS，HTTP 自动跳 HTTPS
+- [ ] `HUB_TRUSTED_PROXIES` 已设为代理的实际地址（**不是留空**）
+- [ ] 代理显式设置 `Host` 与 `X-Forwarded-For`（且用的是真实来源 IP，不是客户端可控的头）
+- [ ] 限流阈值按实际使用人数确认过
+- [ ] `server/data/` 权限 700，密钥文件 600
+- [ ] `python manage.py set-password` 已设置账号口令（**不要只靠共享令牌**）
+- [ ] 顺手验证一次：`curl -I https://你的域名/app` 应能看到
+      `content-security-policy` / `x-content-type-options` / `referrer-policy` 三个头
+
+### 6. CSP 在两处，不要只改一处
+
+`/app` 的 CSP 出现在**两个位置**且必须一致：
+
+1. `web/index.html` 的 `<meta http-equiv>` —— 覆盖 **APK**（APK 用
+   `WebViewAssetLoader` 从 `appassets.androidplatform.net` 加载，响应不经过服务端）
+2. 服务端 `Content-Security-Policy` 响应头（`server/security_headers.py`）——
+   覆盖 **Web**，并且**只有它能带 `frame-ancestors`**（在 `<meta>` 里会被浏览器忽略）
+
+浏览器对二者**取交集**，不一致 ≠ 更严，而是"看起来配了其实没约束住"。
+`server/tests/test_security_headers.py` 会断言两者一致，改一处必须改另一处。
+
+当前策略里唯一放宽的两项及理由：
+
+- `connect-src … http: https:` —— API 地址由用户在运行时填写（LAN IP 或公网域名），
+  编译期无法枚举
+- `style-src-attr 'unsafe-inline'` —— Vue 把模板里的静态 `style="flex:1"` 编译成
+  `el.style.cssText = "flex:1"`，Chrome 按 inline style 校验 `style-src`，不开会被拦。
+  只放开 **style 属性**，`<style>` 与样式表仍必须同源（`style-src 'self'`），脚本仍禁内联。
+
+旧 `/hub` 页**不下发 CSP**：`server/hub_web/hub.html` 还有内联 `<style>` 与内联
+`<script>`，套上会直接打挂旧中枢。通用安全头（nosniff 等）照发。
 
 ## 数据与隐私
 

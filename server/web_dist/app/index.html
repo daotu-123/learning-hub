@@ -4,6 +4,57 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>学习中枢</title>
+<!--
+  M2c-P4 最小 CSP。**每条指令都是从实际代码/产物推出来的，不是抄模板**，依据如下：
+
+  · default-src 'self'            —— 兜底，凡未列出的资源类型都回落到同源。
+  · script-src 'self'             —— 产物里 eval( / new Function 命中数均为 0；
+                                     Vue 是 runtime-only 构建（compileToFunction 0 命中），
+                                     产物 index.html 无内联 <script>；唯一动态注入的脚本是
+                                     web/src/qbank/api.ts 注入的同源相对路径 qbank-data.js。
+                                     **故不需要 'unsafe-eval' / 'unsafe-inline'。**
+  · style-src 'self'; style-src-attr 'unsafe-inline'
+                                 —— **本 CSP 第二处刻意取舍，推导过程见下（这是实测踩出来的）**。
+                                     产物 createElement("style") / insertRule 均 0 命中，
+                                     <style> 元素与样式表都在同源 CSS 文件里 → style-src 保持 'self'。
+                                     但"模板里的静态 style 属性"必须放开：
+                                       Vue 编译 style="flex:1" 时产出的是
+                                         el.style.cssText = "flex:1"
+                                       而**不是** setProperty。实测（Chrome）下
+                                       cssText 赋值按 inline style 被 style-src 检查 → 直接被拦，
+                                       控制台报 "Applying inline style violates … style-src 'self'"，
+                                       且 sha256 反查精确命中 'flex:1;'。
+                                     注意别被"CSSOM 不受 CSP 约束"这句话误导：
+                                     它只对 setProperty 成立，cssText / setAttribute('style')
+                                     都会被 style-src 拦。
+                                     CSP3 把样式拆成 style-src-elem（<style>/样式表）与
+                                     style-src-attr（style 属性），这里正是要"elem 严、attr 松"。
+                                     **不写 unsafe-inline 到 style-src 本身**——那会把
+                                     <style> 与样式表也一起放开，等于白设。
+                                     代价：注入型攻击若能塞进 HTML 就能改元素外观，
+                                     但本项目无 v-html 携带 style 属性（healthChartView /
+                                     mdRender / resultHtml 均只用 class），实际风险面很小；
+                                     换来的是内联 <script> 依然被完全禁止。
+  · img-src 'self' data: blob: http: https:
+                                 —— data: 来自 index.html 里的 data: URI favicon；
+                                     blob: 来自 M2b 的壁纸（hubStore 走 URL.createObjectURL）与
+                                     P3 的照片 fetch→Blob；http(s): 来自 P3 的短时签名媒体 URL
+                                     （页面源可能是 appassets.androidplatform.net 或 /app，
+                                     图片却来自 LAN IP 上的服务）。
+  · font-src 'self' data:         —— 未使用 @font-face 外部字体，data: 留给图标类。
+  · connect-src 'self' http: https:
+                                 —— **本 CSP 唯一刻意放宽的指令**。API 地址由用户在运行时填写
+                                     （web/src/api/server.ts 的 hub_server，可能是 LAN IP 也可能是
+                                     公网域名），编译期无法枚举，只能给 http(s) 段。
+                                     'self' 保留以覆盖「页面与 API 同源」的本机场景。
+  · media-src 'self' blob:        —— 无 <video>/<audio>，取与 img 同档的最小集。
+  · object-src 'none' / frame-src 'none' —— 项目内无 <object>/<embed>/<iframe>，直接封死。
+  · base-uri 'self'               —— 无 <base> 标签，禁止劫持相对路径基准。
+  · form-action 'none'            —— 项目内无表单提交，防注入。
+  刻意不写 frame-ancestors：它在 <meta> 里会被浏览器忽略，必须走服务端响应头，
+  见 server/main.py 的 security_headers 中间件（那里同时有 X-Frame-Options: DENY 兜老浏览器）。
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: http: https:; font-src 'self' data:; connect-src 'self' http: https:; media-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'">
 <!-- 内联 SVG 图标：避免 /favicon.ico 404，Web 与 APK 都不额外请求文件 -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 108 108'%3E%3Crect width='108' height='108' rx='22' fill='%230c1f19'/%3E%3Cg fill='none' stroke='%23d7ef83' stroke-width='7' stroke-linecap='round'%3E%3Cpath d='M28 40h20M28 54h14M28 68h18'/%3E%3Crect x='58' y='34' width='24' height='40' rx='4'/%3E%3Cpath d='M64 46h12M64 54h12M64 62h8'/%3E%3C/g%3E%3C/svg%3E">
   <script type="module" crossorigin src="./assets/index-CPF7ItEW.js"></script>

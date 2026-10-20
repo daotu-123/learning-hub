@@ -270,6 +270,28 @@ async def auth_guard(request: Request, call_next):
     return unauthorized_response()
 
 
+# M2c-P4：安全响应头。注册在 auth_guard **之后** → 位置更外层 →
+# 401 / 429 / 404 也都带着这几个头，而不是只有 200 才带。
+# （若注册在 auth_guard 之前，鉴权失败会直接短路返回，浏览器就看不到 nosniff。）
+from security_headers import ALWAYS_HEADERS, CSP_HEADER, should_send_csp
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """下发 Referrer-Policy / nosniff 等安全头；`/app` 额外下发 CSP 响应头。
+
+    CSP 为何要写两处（meta + 响应头）见 security_headers.py 顶部注释——
+    简单说：APK 页面不经过本服务器，只有 meta 能约束它；
+    而 frame-ancestors 只有走响应头才生效。
+    """
+    resp = await call_next(request)
+    for k, v in ALWAYS_HEADERS.items():
+        resp.headers[k] = v
+    if should_send_csp(request.url.path):
+        resp.headers["Content-Security-Policy"] = CSP_HEADER
+    return resp
+
+
 # M1c：/api/v1 兼容别名（/api/v1/<rest> → /api/<rest>）。
 # 位置是刻意的、也是唯一正确的：必须在 auth_guard **之后**注册。
 # `add_middleware` 是往 user_middleware 头部插，头部 = 最外层 = 最先执行，

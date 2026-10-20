@@ -41,7 +41,7 @@ EXPECTED_MODULES = [
     "ratelimit",
     "clientip",
     "media_sign",
-    "media_sign",
+    "security_headers",
     "manage",
     "dump_routes",
     "main",
