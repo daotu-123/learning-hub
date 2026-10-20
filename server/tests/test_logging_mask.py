@@ -232,3 +232,68 @@ def test_main_installs_filter_on_import():
     assert any(isinstance(f, SensitiveQueryFilter) for f in lg.filters), (
         "import main 时必须已挂上脱敏过滤器，否则 uvicorn main:app 会漏"
     )
+
+
+# ---------------- httpx 出站日志 ----------------
+
+def test_httpx_logger_filter_masks_outbound_url(tmp_path):
+    """httpx 的出站日志形如
+        HTTP Request: GET http://…/api/x?token=abc "HTTP/1.1 200 OK"
+    URL 以 httpx.URL 对象进 args（非 str），必须被同一个过滤器兜住。
+    """
+    import logging.config
+
+    from logging_setup import install_httpx_log_filter
+
+    log_file = tmp_path / "httpx.log"
+    cfg = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {"f": {"format": "%(levelname)s %(message)s"}},
+        "handlers": {
+            "h": {
+                "class": "logging.FileHandler",
+                "filename": str(log_file),
+                "encoding": "utf-8",
+                "formatter": "f",
+            }
+        },
+        "loggers": {
+            "httpx": {"handlers": ["h"], "level": "INFO", "propagate": False},
+        },
+    }
+
+    lg = logging.getLogger("httpx")
+    install_httpx_log_filter()
+    n_before = sum(isinstance(f, SensitiveQueryFilter) for f in lg.filters)
+    assert n_before == 1, f"httpx logger 上应当恰好一个过滤器，实际 {n_before}"
+    install_httpx_log_filter()                       # 重复调用不该挂第二个
+    assert sum(isinstance(f, SensitiveQueryFilter) for f in lg.filters) == n_before
+
+    logging.config.dictConfig(cfg)
+
+    # 调用形状照抄 httpx/_client.py:1025-1032（5 个独立位置参数，URL 是对象）
+    class FakeURL:
+        def __str__(self):
+            return f"http://192.168.1.50:8637/api/hub/netinfo?token={PLAINTEXT}&sig={PLAINTEXT}"
+
+    logging.getLogger("httpx").info(
+        'HTTP Request: %s %s "%s %d %s"',
+        "GET", FakeURL(), "HTTP/1.1", 200, "OK",
+    )
+
+    text = log_file.read_text(encoding="utf-8")
+    assert "token=***" in text and "sig=***" in text, text
+    assert PLAINTEXT not in text, f"httpx 出站日志明文泄漏：\n{text}"
+
+
+def test_install_log_filters_covers_both_loggers():
+    from logging_setup import SensitiveQueryFilter, install_log_filters
+
+    got = install_log_filters()
+    assert set(got) == {"uvicorn.access", "httpx"}
+    for name in ("uvicorn.access", "httpx"):
+        lg = logging.getLogger(name)
+        assert sum(isinstance(f, SensitiveQueryFilter) for f in lg.filters) == 1, (
+            f"{name} 上应当恰好一个过滤器（查重生效）"
+        )

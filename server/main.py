@@ -692,11 +692,12 @@ from errors import register as register_error_handlers
 register_error_handlers(app)
 
 # 日志配置（M1a-D）：access 日志的 token/sig 落盘前打码
-from logging_setup import build_log_config, install_access_log_filter
+from logging_setup import build_log_config, install_log_filters
 
 # 覆盖 `uvicorn main:app` 启动：那种方式用 uvicorn 自己的默认 log_config，
-# build_log_config 不参与，所以在 import 时就把过滤器挂到 uvicorn.access 上。
-install_access_log_filter()
+# build_log_config 不参与，所以在 import 时就把过滤器挂到 logger 上。
+# 同时挂 httpx logger：它自己会打 "HTTP Request: GET …?token=… " 这条出站日志。
+install_log_filters()
 
 # Learning Hub: OpenMAIC AI 课堂（/api/hub/openmaic/*）
 from hub.openmaic import router as openmaic_router

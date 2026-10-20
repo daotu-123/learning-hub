@@ -112,8 +112,41 @@ def install_access_log_filter() -> bool:
 
     重复挂是无害的（先查重），且与 `build_log_config` 叠加时脱敏幂等。
     """
-    lg = logging.getLogger("uvicorn.access")
+    return _install_filter_on("uvicorn.access")
+
+
+def install_httpx_log_filter() -> bool:
+    """给 `httpx` logger 挂上同一个脱敏过滤器；返回是否新挂上。
+
+    覆盖出站请求日志：httpx 自己会打
+        HTTP Request: GET http://…/api/x?token=abc "HTTP/1.1 200 OK"
+    且 URL 是以 `httpx.URL` 对象进 args 的（非 str），服务端只要用过 httpx
+    打过外网请求，明文 token 就会跟着这条日志落盘。本服务自身不用 httpx，
+    但 tests/ 的 E2E 用，且任何将来引入的出站客户端都会走到这个 logger。
+
+    与 access 过滤器共用同一实例逻辑，重复挂会查重。
+    """
+    return _install_filter_on("httpx")
+
+
+def _install_filter_on(logger_name: str) -> bool:
+    """在指定 logger 上挂 SensitiveQueryFilter（查重，幂等）。"""
+    lg = logging.getLogger(logger_name)
     if any(isinstance(f, SensitiveQueryFilter) for f in lg.filters):
         return False
     lg.addFilter(SensitiveQueryFilter())
     return True
+
+
+def install_log_filters() -> dict:
+    """一次性装上所有脱敏过滤器；返回各 logger 是否新挂上。
+
+    main.py 在 import 时调用，保证三种启动方式都不漏：
+      - `python main.py`：build_log_config（handler 级）+ 这里（logger 级）
+      - `uvicorn main:app`：uvicorn 用自己的默认 log_config，只靠这里
+      - 任何用 httpx 打外网的代码：靠 httpx logger 上这个
+    """
+    return {
+        "uvicorn.access": install_access_log_filter(),
+        "httpx": install_httpx_log_filter(),
+    }
