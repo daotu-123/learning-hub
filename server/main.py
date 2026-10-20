@@ -171,6 +171,16 @@ async def auth_guard(request: Request, call_next):
         status_code=401,
     )
 
+
+# M1c：/api/v1 兼容别名（/api/v1/<rest> → /api/<rest>）。
+# 位置是刻意的、也是唯一正确的：必须在 auth_guard **之后**注册。
+# `add_middleware` 是往 user_middleware 头部插，头部 = 最外层 = 最先执行，
+# 所以放这里才能让「改写」早于「鉴权」——否则 auth_guard 读到的是
+# "/api/v1/auth/token"，不在 AUTH_EXEMPT_API 里，非回环一律 401。
+# 顺序断言见 tests/test_apiv1.py::test_alias_runs_before_auth。
+from apiv1 import install as install_api_v1_alias
+install_api_v1_alias(app)
+
 # 统一错误响应（M1a-C）：只新增 error 形状，保留既有 detail 字段
 from errors import register as register_error_handlers
 register_error_handlers(app)
