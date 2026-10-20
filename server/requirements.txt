@@ -5,6 +5,9 @@ fastapi==0.141.1
 uvicorn[standard]==0.52.4
 pydantic==2.13.5
 
+# 身份体系（M2a）：单账号 + Argon2id 口令哈希
+argon2-cffi==25.1.0
+
 # 测试（pytest + FastAPI TestClient 依赖 httpx）
 pytest==9.1.1
 httpx==0.28.1

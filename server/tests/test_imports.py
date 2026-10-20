@@ -37,6 +37,8 @@ EXPECTED_MODULES = [
     "errors",
     "logging_setup",
     "apiv1",
+    "auth_sessions",
+    "manage",
     "dump_routes",
     "main",
     # routers/ 十个业务域
