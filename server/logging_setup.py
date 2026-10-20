@@ -96,3 +96,24 @@ def build_log_config(
         },
         "root": {"level": "INFO", "handlers": ["h"]},
     }
+
+
+def install_access_log_filter() -> bool:
+    """给 `uvicorn.access` logger 挂上脱敏过滤器；返回是否新挂上。
+
+    解决什么：上面的 `build_log_config` 只在 `python main.py` 启动时生效。
+    换成 `uvicorn main:app`（开发/部署常用）时，uvicorn 用它**自己**的默认
+    LOGGING_CONFIG，我们的 handler 过滤器根本不参与，token 又会明文落盘。
+
+    为什么挂在 logger 上而不是 handler：uvicorn 默认配置里 `uvicorn.access`
+    没有 `filters` 键，dictConfig 不会清掉已挂在 logger 上的过滤器；而它自带的
+    handler 是 uvicorn 内部创建的，我们碰不到。logger 级过滤器在
+    `Logger.handle()` 阶段执行，先于任何 handler，因此两种启动方式都覆盖。
+
+    重复挂是无害的（先查重），且与 `build_log_config` 叠加时脱敏幂等。
+    """
+    lg = logging.getLogger("uvicorn.access")
+    if any(isinstance(f, SensitiveQueryFilter) for f in lg.filters):
+        return False
+    lg.addFilter(SensitiveQueryFilter())
+    return True

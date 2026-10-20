@@ -163,3 +163,72 @@ def test_build_log_config_keeps_previous_shape():
     assert h["maxBytes"] == 2 * 1024 * 1024 and h["backupCount"] == 2
     assert h["encoding"] == "utf-8"
     assert cfg["disable_existing_loggers"] is False
+
+
+# ---------------- 外部 log_config 场景 ----------------
+
+def test_install_access_log_filter_survives_external_log_config(tmp_path):
+    """模拟 `uvicorn main:app`：外部 dictConfig 重新定义 uvicorn.access
+    （自带 handler、propagate=False），过滤器必须仍然生效。
+
+    这正是 install_access_log_filter 存在的理由——那种启动方式下
+    build_log_config 根本不参与。
+    """
+    import logging.config
+
+    from logging_setup import install_access_log_filter
+
+    log_file = tmp_path / "external.log"
+    external_cfg = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {"access": {"format": "%(levelname)s %(message)s"}},
+        "handlers": {
+            "h": {
+                "class": "logging.FileHandler",
+                "filename": str(log_file),
+                "encoding": "utf-8",
+                "formatter": "access",
+            }
+        },
+        "loggers": {
+            # 形状照抄 uvicorn 默认 LOGGING_CONFIG 的 uvicorn.access：无 filters 键
+            "uvicorn.access": {"handlers": ["h"], "level": "INFO", "propagate": False},
+        },
+    }
+
+    lg = logging.getLogger("uvicorn.access")
+    install_access_log_filter()
+    assert any(isinstance(f, SensitiveQueryFilter) for f in lg.filters)
+    n_before = sum(isinstance(f, SensitiveQueryFilter) for f in lg.filters)
+    install_access_log_filter()                       # 重复调用不该重复挂
+    assert sum(isinstance(f, SensitiveQueryFilter) for f in lg.filters) == n_before
+
+    logging.config.dictConfig(external_cfg)           # 外部配置后置，过滤器要活下来
+    assert any(isinstance(f, SensitiveQueryFilter) for f in lg.filters), (
+        "外部 dictConfig 把过滤器清掉了，uvicorn main:app 会漏"
+    )
+
+    # 调用方式与 uvicorn 一致：三个独立位置参数（写成单个 tuple 会被 logging
+    # 当成一层嵌套，format 阶段直接 TypeError，与脱敏无关）
+    lg.info(
+        '%s - "%s" %d',
+        "10.0.0.9:5555",
+        f"GET /api/hub/netinfo?token={PLAINTEXT} HTTP/1.1",
+        200,
+    )
+
+    text = log_file.read_text(encoding="utf-8")
+    assert "token=***" in text, text
+    assert PLAINTEXT not in text, f"外部 log_config 下明文泄漏：\n{text}"
+
+
+def test_main_installs_filter_on_import():
+    """main 一旦被 import，uvicorn.access 上就该有过滤器（不等 __main__ 分支）。"""
+    import main  # noqa: F401  （导入即触发 install）
+    from logging_setup import SensitiveQueryFilter
+
+    lg = logging.getLogger("uvicorn.access")
+    assert any(isinstance(f, SensitiveQueryFilter) for f in lg.filters), (
+        "import main 时必须已挂上脱敏过滤器，否则 uvicorn main:app 会漏"
+    )
