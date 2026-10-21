@@ -410,3 +410,99 @@ def test_startup_log_warns_when_public_with_bypass(client, monkeypatch, caplog):
         main._log_security_mode()
     text = "\n".join(r.getMessage() for r in caplog.records)
     assert "回环免令牌豁免已开" in text
+
+
+# ====================================================================
+# 6. netinfo 信息收敛（M3-P2）
+# ====================================================================
+# /api/hub/netinfo 在 AUTH_EXEMPT_API 里 = **免鉴权**端点。
+# 它把 lan_ip / tailscale_ip 回给任何人，在公网模式下等于免费送内网拓扑。
+
+LOCAL_ONLY_FIELDS = ("lan_ip", "tailscale_ip", "remote_url")
+
+
+def test_netinfo_in_local_mode_keeps_full_fields(client, monkeypatch):
+    """本机/局域网模式：字段逐字不变（桌面端与局域网手机靠它拼地址）。"""
+    import hub.router as hr
+
+    monkeypatch.setattr(hr, "HUB_PUBLIC", False)
+    r = client.get("/api/hub/netinfo")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    for f in LOCAL_ONLY_FIELDS:
+        assert f in body, "本机模式丢了字段 %s：%s" % (f, body)
+    assert body["public_mode"] is False
+    assert "port" in body
+
+
+def test_netinfo_in_public_mode_hides_lan_topology(client, monkeypatch):
+    """公网模式：不再返回 lan_ip / tailscale_ip / remote_url。"""
+    import hub.router as hr
+
+    monkeypatch.setattr(hr, "HUB_PUBLIC", True)
+    r = client.get("/api/hub/netinfo")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    for f in LOCAL_ONLY_FIELDS:
+        assert f not in body, (
+            "公网模式仍在返回 %s —— 这是免鉴权端点，等于对外送内网拓扑：%s"
+            % (f, body)
+        )
+    assert body["public_mode"] is True
+
+
+def test_netinfo_public_mode_is_minimal(client, monkeypatch):
+    """公网模式的字段集应当就那么几个，多一个都是信息泄露。"""
+    import hub.router as hr
+
+    monkeypatch.setattr(hr, "HUB_PUBLIC", True)
+    body = client.get("/api/hub/netinfo").json()
+    # port 保留：访问都成功了端口必然已知，不构成泄露
+    assert set(body) == {"public_mode", "port"}, body
+
+
+def test_netinfo_public_mode_does_not_call_probes(client, monkeypatch):
+    """公网模式下不该再去探测内网（那是没必要且会拖慢响应的 IO）。"""
+    import hub.router as hr
+
+    monkeypatch.setattr(hr, "HUB_PUBLIC", True)
+    called = []
+    monkeypatch.setattr(hr, "find_lan_ip", lambda: called.append("lan") or "192.168.1.9")
+    monkeypatch.setattr(hr, "find_tailscale_ip", lambda: called.append("ts") or "100.72.46.20")
+
+    body = client.get("/api/hub/netinfo").json()
+    assert called == [], "公网模式下仍在探测内网：%s" % called
+    assert "192.168.1.9" not in str(body)
+    assert "100.72.46.20" not in str(body)
+
+
+def test_netinfo_local_mode_does_call_probes(client, monkeypatch):
+    """对照组：本机模式仍会探测并返回两个地址。"""
+    import hub.router as hr
+
+    monkeypatch.setattr(hr, "HUB_PUBLIC", False)
+    monkeypatch.setattr(hr, "find_lan_ip", lambda: "192.168.1.9")
+    monkeypatch.setattr(hr, "find_tailscale_ip", lambda: "100.72.46.20")
+
+    body = client.get("/api/hub/netinfo").json()
+    assert body["lan_ip"] == "192.168.1.9"
+    assert body["tailscale_ip"] == "100.72.46.20"
+    assert body["remote_url"] == "http://100.72.46.20:%d" % body["port"]
+
+
+def test_netinfo_is_auth_exempt_in_both_modes(client, monkeypatch):
+    """两种模式下 netinfo 都是免鉴权的 —— 所以收敛字段是唯一的防线。
+
+    这条把"为什么必须收敛"钉成测试：一旦有人给 netinfo 加了鉴权要求，
+    这个端点就不再是 recon 面，收敛也算多余；但那时手机 App 的
+    "问服务器在哪" 流程会先坏掉。这两个后果都要有人知道。
+    """
+    import hub.router as hr
+    from main import AUTH_EXEMPT_API
+
+    assert "/api/hub/netinfo" in AUTH_EXEMPT_API
+    for public in (False, True):
+        monkeypatch.setattr(hr, "HUB_PUBLIC", public)
+        # client 夹具本身就是非回环（LAN）来源
+        r = client.get("/api/hub/netinfo")
+        assert r.status_code == 200, (public, r.status, r.text)

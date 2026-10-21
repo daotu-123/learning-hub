@@ -32,7 +32,7 @@ router = APIRouter(prefix="/api/hub", tags=["hub"])
 # M1a：data 目录改由 config 单一来源（原为本文件硬编码），
 # 否则 HUB_DATA_DIR 环境变量只会改变 main.py 的落点而这里不跟着变。
 import config
-from config import DATA_DIR
+from config import DATA_DIR, HUB_PORT, HUB_PUBLIC
 
 SETTINGS_JSON = DATA_DIR / "settings.json"
 WALLPAPER_DIR = DATA_DIR / "wallpapers"
@@ -503,11 +503,35 @@ def find_tailscale_ip() -> Optional[str]:
 @router.get("/netinfo")
 def hub_netinfo():
     """网络信息：局域网 IP + Tailscale 远程地址（手机跨网络同步用）。
-    服务绑 0.0.0.0，两个地址都直达本机；remote_url 为空表示未安装 Tailscale。"""
+
+    **公网模式（`HUB_PUBLIC=1`）只返回最小字段**（M3-P2）。
+
+    理由：这个端点在 `AUTH_EXEMPT_API` 里（它必须能在未登录时可用，
+    手机 App 靠它问"服务器在哪"），所以它是**免鉴权**端点。一个免鉴权
+    端点把 `lan_ip` / `tailscale_ip` 这种内网拓扑回给公网上的任何人，
+    等于免费的 recon 素材：拿到内网段 + 一个稳定的内网地址，
+    后续扫描内网、或对着这些地址做针对性攻击都方便得多。
+
+    公网模式下这两个地址对调用方也没有用途——服务端绑 127.0.0.1，
+    手机是通过隧道域名访问的，不需要知道内网 IP 是多少。
+
+    保留 `port`：它是服务自己监听的端口，属于调用方本来就知道的信息
+    （访问都成功了，端口必然是通的），不构成信息泄露。
+
+    本机/局域网模式下行为**逐字不变**——那里的调用方（桌面端、
+    局域网内的手机）正是靠这两个字段来拼服务器地址的。
+    """
+    port = HUB_PORT
+    if HUB_PUBLIC:
+        return {
+            "public_mode": True,
+            "port": port,
+        }
     ts = find_tailscale_ip()
     return {
+        "public_mode": False,
         "lan_ip": find_lan_ip(),
         "tailscale_ip": ts,
-        "port": HUB_PORT,
-        "remote_url": ("http://%s:%d" % (ts, HUB_PORT)) if ts else "",
+        "port": port,
+        "remote_url": ("http://%s:%d" % (ts, port)) if ts else "",
     }
