@@ -230,7 +230,7 @@ def test_manage_py_also_survives_piped_stdio(tmp_path):
         [sys.executable, "manage.py", "set-password", "--force-default-dir"],
         cwd=str(SERVER_DIR), env=env,
         input="manage-stdio-test-pw\nmanage-stdio-test-pw\n",
-        capture_output=True, text=True,
+        capture_output=True,
         encoding="utf-8", errors="replace",     # 显式解码，别让 locale 坑自己
         timeout=120,
     )
@@ -384,3 +384,132 @@ def test_removing_the_fix_makes_this_red(monkeypatch, tmp_path):
         "禁用修复后应出现 UnicodeEncodeError，实际：\n" + combined[-1500:]
     )
     assert "\\u26a0" in combined or "⚠" in combined, combined[-1500:]
+
+
+# ====================================================================
+# 4. 源码扫描：禁止裸 text=True / universal_newlines=True
+# ====================================================================
+# 这不是洁癖，是一个已经发生过的坑：
+#   `subprocess.run(..., text=True)` 会用**父进程 locale 编码**（中文 Windows
+#   是 cp936）去解子进程输出。子进程一旦输出 UTF-8 的中文（我们所有模块都
+#   在 force_utf8_stdio 之后输出 UTF-8 了），父进程就 UnicodeDecodeError，
+#   `r.stderr` 变成 None，接着 `... in None` 抛 TypeError ——
+#   报错完全指不到真正原因，看起来像"测试框架坏了"。
+#
+# 修法是全仓统一显式 `encoding="utf-8", errors="replace"`。
+# 用源码扫描锁住，是因为这类问题不会自己暴露：加了 encoding 的地方测试通过，
+# 没加的地方也常常"碰巧"通过（子进程输出恰好全是 ASCII）。
+def _python_sources():
+    for p in SERVER_DIR.rglob("*.py"):
+        s = str(p).replace("\\", "/")
+        if "/.venv/" in s or "/build/" in s or "/dist/" in s or "__pycache__" in s:
+            continue
+        # 跳过本文件：下面两处扫描规则里出现 "text=True" 字面量作为
+        # 被禁名单，扫自己会把自己判成违规（第一次跑就抓到了三次）。
+        if p.name == "test_stdio_encoding.py":
+            continue
+        yield p
+
+
+def test_no_bare_text_true_anywhere():
+    """全仓不允许出现 text=True / universal_newlines=True。"""
+    import io
+    import tokenize
+
+    offenders = []
+    for path in _python_sources():
+        with io.open(path, "rb") as fh:
+            try:
+                toks = list(tokenize.tokenize(fh.readline))
+            except (tokenize.TokenError, SyntaxError):
+                continue
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        for tok in toks:
+            if tok.type != tokenize.STRING:
+                continue
+            s = tok.string.strip("\"'")
+            # 只认恰好等于这两个值的字符串字面量，避开 "text=True" 之类说明
+            if s not in ("text=True", "text=1", "universal_newlines=True"):
+                continue
+            # 同一调用里若已显式给了 encoding，该 text= 就是冗余但无害
+            ln = lines[tok.start[0] - 1] if tok.start[0] - 1 < len(lines) else ""
+            nearby = " ".join(lines[tok.start[0] - 1: tok.start[0] + 3])
+            if "encoding=" in nearby:
+                continue
+            offenders.append("%s:%d  %s" % (path.name, tok.start[0], ln.strip()))
+    assert not offenders, (
+        "以下位置用了裸 text=True/ universal_newlines=True，"
+        "解码会走父进程 locale，中文 Windows 上会 UnicodeDecodeError：\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_subprocess_calls_that_read_text_use_explicit_encoding():
+    """收输出并**当文本读**的 subprocess 调用，必须显式给 encoding=。
+
+    判断依据是「整个调用的括号范围」，不是固定行数——最早那版按行窗口扫，
+    把 router.py 那个跨了 8 行的调用判成了违规，而它的 encoding= 就在
+    第 9 行。固定窗口在这类格式化过的调用上必然误报，而误报会让人
+    开始忽略这个检查。
+
+    两种合法写法都放行：
+      - 显式 `encoding=..., errors="replace"`（子进程输出 UTF-8，我们全部模块
+        都在 force_utf8_stdio 之后输出 UTF-8）
+      - 收字节流后自己 `.decode(..., errors=...)`（hub/openmaic.py 对
+        netstat 就是这么做的，因为它的输出是 GBK）
+    """
+    import io
+    import tokenize
+
+    offenders = []
+    for path in _python_sources():
+        with io.open(path, "rb") as fh:
+            try:
+                toks = list(tokenize.tokenize(fh.readline))
+            except (tokenize.TokenError, SyntaxError):
+                continue
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+
+        for i, tok in enumerate(toks):
+            if tok.type != tokenize.NAME or tok.string not in (
+                "run", "Popen", "check_output", "check_call"
+            ):
+                continue
+            # 往后走到配平的右括号，取出整个调用的源码范围
+            depth, span, j = 0, [], i
+            while j < len(toks):
+                t = toks[j]
+                if t.type == tokenize.OP and t.string in "([{":
+                    depth += 1
+                elif t.type == tokenize.OP and t.string in ")]}":
+                    depth -= 1
+                    if depth == 0 and j > i:
+                        break
+                span.append(t)
+                j += 1
+            else:
+                continue
+
+            end_line = span[-1].start[0]
+            src = " ".join(lines[tok.start[0] - 1: end_line + 3])
+            if "subprocess" not in src:
+                continue
+            has_out = ("capture_output" in src) or ("stdout=" in src)
+            if not has_out:
+                continue
+            if "encoding=" in src:
+                continue
+            if ".decode(" in src:
+                continue          # 收字节流自己解，允许
+            # 收字节流写文件、或干脆丢弃输出 → 不解码，无风险
+            if ".stdout" not in src and ".stderr" not in src:
+                continue
+            offenders.append("%s:%d  %s" % (
+                path.name, tok.start[0], src.strip()[:110]))
+
+    assert not offenders, (
+        "以下 subprocess 调用把输出当文本读却没给 encoding=，"
+        "解码会走父进程 locale（中文 Windows 上是 cp936），"
+        "子进程输出 UTF-8 中文时会 UnicodeDecodeError：\n  "
+        + "\n  ".join(offenders)
+    )

@@ -157,7 +157,7 @@ def test_guard_really_blocks_process_start(tmp_path):
     [sys.executable, "-c",
          "import sys; from publicmode import startup_public_guard;"
          " sys.exit(startup_public_guard())"],
-    cwd=str(SERVER_DIR), env=env, capture_output=True, text=True, timeout=60,
+    cwd=str(SERVER_DIR), env=env, capture_output=True, encoding="utf-8", errors="replace", timeout=60,
     )
     assert r.returncode == EXIT_PUBLIC_GUARD, (r.returncode, r.stdout, r.stderr)
     assert "拒绝启动：公网模式（HUB_PUBLIC=1）必须显式指定数据目录" in r.stderr
@@ -177,7 +177,7 @@ def test_guard_passes_process_when_data_dir_given(tmp_path):
     [sys.executable, "-c",
          "import sys; from publicmode import startup_public_guard;"
          " sys.exit(startup_public_guard())"],
-    cwd=str(SERVER_DIR), env=env, capture_output=True, text=True, timeout=60,
+    cwd=str(SERVER_DIR), env=env, capture_output=True, encoding="utf-8", errors="replace", timeout=60,
     )
     assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
 
@@ -319,7 +319,7 @@ def test_config_host_defaults_to_all_without_public():
     r = subprocess.run(
         [sys.executable, "-c",
          "import json,config;print(json.dumps({'host':config.HUB_HOST}))"],
-        cwd=str(SERVER_DIR), env=env, capture_output=True, text=True, timeout=60)
+        cwd=str(SERVER_DIR), env=env, capture_output=True, encoding="utf-8", errors="replace", timeout=60)
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout)["host"] == "0.0.0.0"
 
@@ -336,7 +336,7 @@ def test_config_host_defaults_to_loopback_with_public():
     r = subprocess.run(
         [sys.executable, "-c",
          "import json,config;print(json.dumps({'host':config.HUB_HOST,'public':config.HUB_PUBLIC}))"],
-        cwd=str(SERVER_DIR), env=env, capture_output=True, text=True, timeout=60)
+        cwd=str(SERVER_DIR), env=env, capture_output=True, encoding="utf-8", errors="replace", timeout=60)
     assert r.returncode == 0, r.stderr
     got = json.loads(r.stdout)
     assert got["public"] is True
@@ -354,7 +354,7 @@ def test_explicit_host_wins_over_public_default():
     env["PYTHONPATH"] = str(SERVER_DIR)
     r = subprocess.run(
         [sys.executable, "-c", "import json,config;print(json.dumps({'host':config.HUB_HOST}))"],
-        cwd=str(SERVER_DIR), env=env, capture_output=True, text=True, timeout=60)
+        cwd=str(SERVER_DIR), env=env, capture_output=True, encoding="utf-8", errors="replace", timeout=60)
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout)["host"] == "0.0.0.0"
 

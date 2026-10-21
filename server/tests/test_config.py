@@ -44,7 +44,7 @@ def _config_env(extra: dict) -> dict:
     )
     out = subprocess.run(
         [sys.executable, "-c", code],
-        capture_output=True, text=True, cwd=str(SERVER_DIR), check=True,
+        capture_output=True, encoding="utf-8", errors="replace", cwd=str(SERVER_DIR), check=True,
     )
     return json.loads(out.stdout.strip().splitlines()[-1])
 
@@ -248,7 +248,7 @@ def _frozen_config_env(extra: dict) -> dict:
     )
     out = subprocess.run(
         [sys.executable, "-c", code],
-        cwd=str(SERVER_DIR), capture_output=True, text=True,
+        cwd=str(SERVER_DIR), capture_output=True, encoding="utf-8", errors="replace",
     )
     assert out.returncode == 0, out.stderr
     return json.loads(out.stdout)

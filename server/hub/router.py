@@ -478,7 +478,15 @@ def find_tailscale_ip() -> Optional[str]:
         try:
             out = subprocess.run(
                 [exe, "ip", "-4"],
-                capture_output=True, text=True, timeout=3,
+                capture_output=True,
+                # 显式解码，不要 text=True。text=True 会用 locale 编码
+                # （中文 Windows 是 cp936）去解 tailscale 的输出，一旦它多打
+                # 一行非 ASCII 的提示，解码就抛 UnicodeDecodeError，
+                # 而下面那个裸 except 会把它吞掉 → Tailscale 地址静默消失，
+                # 界面显示"未检测到"，与"压根没装"完全无法区分。
+                # errors="replace" 保证解码永不抛；反正我们只用正则取
+                # IPv4（纯 ASCII），替换掉的多字节字符不影响结果。
+                encoding="utf-8", errors="replace", timeout=3,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             if out.returncode == 0:
