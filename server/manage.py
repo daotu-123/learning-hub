@@ -33,6 +33,7 @@ import getpass
 import sys
 from pathlib import Path
 
+import auth_sessions
 from auth_sessions import (
     MIN_PASSWORD_LENGTH,
     account_exists,
@@ -56,15 +57,24 @@ def _resolve_data_dir() -> Path:
 
 
 def _repo_default_data_dir():
-    """仓库内默认数据目录（`<本文件所在目录>/data`）；打包运行时返回 None。
+    """"默认数据目录"——不显式设 HUB_DATA_DIR 时会落到那里。
+
+    源码运行：`<本文件所在目录>/data`。
+    打包运行：`<exe 所在目录>/data`（与 config._default_data_dir 保持一致）。
 
     用 `Path(__file__).parent` 而不是 config.HUB_ROOT：HUB_ROOT 是可以被
-    环境变量改写的，"仓库在哪"这个问题只有文件自己的位置说得准。
-    PyInstaller 打包运行时 __file__ 指向解包临时目录，那里没有仓库语义，
-    因此返回 None 表示"无法判定，跳过防呆"（打包产物本来也不含 manage.py）。
+    环境变量改写的，"默认在哪"这个问题只有产物自己的位置说得准。
+
+    **打包运行时的防呆不能省**：部署机恰恰是最需要它的地方。最初的实现
+    在 frozen 下直接返回 None（等于跳过检查），结果不带 HUB_DATA_DIR 跑
+    LearningHubManage.exe 时账号被写进了开发机路径 server/data——
+    防呆在最该生效的场景下线了。
     """
     if getattr(sys, "frozen", False):
-        return None
+        try:
+            return (Path(sys.executable).resolve().parent / "data").resolve()
+        except OSError:
+            return None
     try:
         return (Path(__file__).resolve().parent / "data").resolve()
     except OSError:
@@ -97,13 +107,22 @@ def guard_data_dir(force_default_dir: bool):
     if repo_default is None or target != repo_default:
         return None
 
-    hint = (
-        "该路径是本仓库内的默认数据目录。\n"
-        "  在开发机上这么用没问题；若这是部署机，账号会被写进 clone 目录，\n"
-        "  而不是部署文档/备份脚本约定的位置。\n"
-        "  正确做法：设置 HUB_DATA_DIR 指向部署数据目录；\n"
-        "  确实想写这里就加 --force-default-dir。"
-    )
+    if getattr(sys, "frozen", False):
+        hint = (
+            "该路径是 exe 同级的默认数据目录（未设置 HUB_DATA_DIR 时的落点）。\n"
+            "  在 exe 旁边建一个 data\\ 给本机调试用没问题；若这是正式部署，\n"
+            "  账号/会话/usage.db 会跟着 exe 走，换机器、重打包都会丢掉。\n"
+            "  正确做法：设置 HUB_DATA_DIR 指向固定的数据目录（如 D:\\LearningHub\\data）；\n"
+            "  确实想写在 exe 旁边就加 --force-default-dir。"
+        )
+    else:
+        hint = (
+            "该路径是本仓库内的默认数据目录。\n"
+            "  在开发机上这么用没问题；若这是部署机，账号会被写进 clone 目录，\n"
+            "  而不是部署文档/备份脚本约定的位置。\n"
+            "  正确做法：设置 HUB_DATA_DIR 指向部署数据目录；\n"
+            "  确实想写这里就加 --force-default-dir。"
+        )
     isatty = getattr(sys.stdin, "isatty", None)
     if isatty is not None and isatty():
         print("⚠ " + hint)
@@ -164,6 +183,14 @@ def cmd_set_password(args) -> int:
     acct = set_password(args.username or DEFAULT_USERNAME, password, revoke_sessions=True)
 
     print("账号已写入：%s" % acct.get("username"))
+    # 可审计的落点。上面那行只有用户名，没有路径——而"账号到底写到哪个文件"
+    # 才是排查时最常被问的问题。不看启动横幅的人（只截了 CLI 输出、
+    # 或在别的机器上翻历史记录）就靠这一行。
+    # 按模块属性读而不是 from-import：ACCOUNT_JSON 是导入时求值的，
+    # 测试会 monkeypatch auth_sessions.ACCOUNT_JSON 到临时目录，
+    # from-import 会把旧值绑死，导致这里打印真实数据目录的路径。
+    account_path = Path(auth_sessions.ACCOUNT_JSON).expanduser().resolve()
+    print("已写入：%s" % account_path)
     print("口令哈希已保存（Argon2id）；明文口令没有落盘，也没有打印。")
     if args.reset:
         print("已覆盖旧账号，全部会话已撤销。")

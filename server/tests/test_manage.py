@@ -3,15 +3,19 @@
 
 核心约束：
   1. 任何调用都先打印「目标数据目录：<绝对路径>」；
-  2. 目标是仓库内默认 server/data 且未加 --force-default-dir 时：
+  2. 目标是默认数据目录（源码=server/data，frozen=exe 同级 data）
+     且未加 --force-default-dir 时：
        交互 → 必须明确输入 y 才放行；
        非交互 → 退出码 2，且**什么都不写**。
+  3. 建号成功后必须打印「已写入：<account.json 绝对路径>」（可审计落点）。
+  4. frozen 与源码两种场景的提示语各自成立（别让一个覆盖另一个）。
 """
 import sys
 from pathlib import Path
 
 import pytest
 
+import auth_sessions
 import manage
 from auth_sessions import account_exists
 
@@ -181,3 +185,131 @@ def test_repo_default_dir_is_sibling_of_manage_py():
 def test_exit_code_is_distinct_from_business_refusal():
     """2 不能和 cmd_set_password 的"账号已存在"退出码 1 撞车。"""
     assert manage.EXIT_REFUSED_DEFAULT_DIR != 1
+
+
+# ---------------------------------------------------------------- 7. 打包运行时
+# 这一组是本轮踩出来的：初版 _repo_default_data_dir() 在 frozen 下直接返回
+# None，等于**跳过防呆**。结果不带 HUB_DATA_DIR 跑 LearningHubManage.exe 时，
+# 账号被写进了开发机路径 server/data——防呆在最该生效的场景下线了。
+def test_frozen_mode_default_dir_is_exe_sibling(monkeypatch):
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", r"C:\Deploy\LearningHub\LearningHubManage.exe", raising=False)
+    got = manage._repo_default_data_dir()
+    assert got is not None
+    assert str(got) == str(Path(r"C:\Deploy\LearningHub\data"))
+
+
+def test_frozen_mode_guard_still_fires(monkeypatch, noninteractive):
+    """frozen 下目标=exe 同级 data 时，防呆必须照样拦（退出码 2）。"""
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", r"C:\Deploy\LearningHub\LearningHubManage.exe", raising=False)
+    monkeypatch.setattr(manage, "DATA_DIR", Path(r"C:\Deploy\LearningHub\data"))
+    code = manage.guard_data_dir(False)
+    assert code == manage.EXIT_REFUSED_DEFAULT_DIR
+
+
+def test_frozen_mode_force_flag_still_bypasses(monkeypatch, noninteractive):
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", r"C:\Deploy\LearningHub\LearningHubManage.exe", raising=False)
+    monkeypatch.setattr(manage, "DATA_DIR", Path(r"C:\Deploy\LearningHub\data"))
+    assert manage.guard_data_dir(True) is None
+
+
+def test_frozen_mode_explicit_data_dir_passes(monkeypatch, noninteractive):
+    """设了 HUB_DATA_DIR 指到别处 → 放行（这正是防呆想引导的行为）。"""
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", r"C:\Deploy\LearningHub\LearningHubManage.exe", raising=False)
+    monkeypatch.setattr(manage, "DATA_DIR", Path(r"D:\LearningHub\data"))
+    assert manage.guard_data_dir(False) is None
+
+
+def test_frozen_hint_mentions_exe_sibling(capsys, monkeypatch, noninteractive):
+    """frozen 场景的提示语要讲"exe 同级"，不能沿用仓库那套说辞。"""
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", r"C:\Deploy\LearningHub\LearningHubManage.exe", raising=False)
+    monkeypatch.setattr(manage, "DATA_DIR", Path(r"C:\Deploy\LearningHub\data"))
+    manage.guard_data_dir(False)
+    out = capsys.readouterr().out
+    assert "exe 同级" in out
+    assert "HUB_DATA_DIR" in out
+
+
+def test_source_hint_mentions_repo(capsys, monkeypatch, repo_default, noninteractive):
+    """源码场景的提示语要讲"仓库内"，且不能被 frozen 那套覆盖。"""
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    monkeypatch.setattr(manage, "DATA_DIR", repo_default)
+    manage.guard_data_dir(False)
+    out = capsys.readouterr().out
+    assert "仓库内" in out
+    assert "HUB_DATA_DIR" in out
+    assert "exe 同级" not in out, "源码场景不该出现 exe 同级的说法"
+
+
+# ---------------------------------------------------------------- 8. 可审计落点
+def test_set_password_prints_audit_path(store, monkeypatch, capsys):
+    """建号成功后必须打印「已写入：<account.json 绝对路径>」。
+
+    理由：不看启动横幅的人（只截 CLI 输出、或事后翻记录）靠这一行
+    确认账号写到了哪个文件。
+    """
+    monkeypatch.setattr(auth_sessions, "ACCOUNT_JSON", store / "account.json")
+    monkeypatch.setattr(manage, "_read_secret", lambda prompt="": "unit-test-only-not-a-real-secret")
+    monkeypatch.setattr(manage, "DATA_DIR", store)
+
+    rc = manage.main(["set-password", "--force-default-dir"])
+    assert rc == 0
+    out = capsys.readouterr().out
+
+    line = [ln for ln in out.splitlines() if ln.startswith("已写入：")]
+    assert len(line) == 1, out
+    printed = line[0][len("已写入："):].strip()
+    # 必须是绝对路径，且指向真实写入的 account.json
+    p = Path(printed)
+    assert p.is_absolute(), printed
+    assert p.name == "account.json", printed
+    assert p.resolve() == (store / "account.json").resolve(), printed
+    assert p.exists(), "打印的路径必须是真的存在（否则审计行在骗人）"
+
+
+def test_audit_path_follows_monkeypatched_account_file(store, monkeypatch, capsys):
+    """审计行必须读 auth_sessions.ACCOUNT_JSON 的**当前值**。
+
+    如果 manage.py 写成 `from auth_sessions import ACCOUNT_JSON`，
+    导入时就绑死了旧值，这里会打印真实数据目录的路径——测试要能抓住。
+    """
+    real = Path(r"E:\agent\androd-app\server\data\account.json")
+    fake = store / "account.json"
+    monkeypatch.setattr(auth_sessions, "ACCOUNT_JSON", fake)
+    monkeypatch.setattr(manage, "_read_secret", lambda prompt="": "unit-test-only-not-a-real-secret")
+    monkeypatch.setattr(manage, "DATA_DIR", store)
+
+    manage.main(["set-password", "--force-default-dir"])
+    out = capsys.readouterr().out
+    line = [ln for ln in out.splitlines() if ln.startswith("已写入：")][0]
+    printed = line[len("已写入："):].strip()
+    assert printed != str(real), "打印的是真实数据目录，说明 ACCOUNT_JSON 被 from-import 绑死了"
+    assert Path(printed).resolve() == fake.resolve()
+
+
+def test_audit_path_on_reset_too(store, monkeypatch, capsys):
+    """--reset 覆盖已有账号时同样要打印落点（覆盖是最需要留痕的操作）。"""
+    import json
+
+    monkeypatch.setattr(auth_sessions, "ACCOUNT_JSON", store / "account.json")
+    monkeypatch.setattr(manage, "DATA_DIR", store)
+    auth_sessions.set_password("tester", "unit-test-only-not-a-real-secret")
+    assert (store / "account.json").exists()
+
+    monkeypatch.setattr(manage, "_read_secret", lambda prompt="": "unit-test-only-not-a-real-secret-2")
+    # 必须显式传 --username：--reset 不带它会用默认值 owner 覆盖，
+    # 那是既有行为（cmd_set_password 里 args.username or DEFAULT_USERNAME），
+    # 本用例要验的是"覆盖时也打印落点"，不是用户名语义。
+    rc = manage.main(["set-password", "--reset", "--username", "tester", "--force-default-dir"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    line = [ln for ln in out.splitlines() if ln.startswith("已写入：")]
+    assert len(line) == 1, out
+    acct = json.loads((store / "account.json").read_text(encoding="utf-8"))
+    assert acct["username"] == "tester"
+    # 覆盖确实发生了：口令已换成新的
+    assert auth_sessions.verify_password("unit-test-only-not-a-real-secret-2") is True
