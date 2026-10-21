@@ -14,28 +14,20 @@ App 不再承担记录与展示，本模块连同 usage.db 的 health 表一起�
 删除时只停读写。删表有数据风险，无收益。
 """
 import datetime
+import sqlite3
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from config import USAGE_DB
+import usage_db
 
 router = APIRouter(tags=["legacy-life"])
 
-import sqlite3
-
 
 def _health_conn():
-    con = sqlite3.connect(USAGE_DB)
-    con.execute(
-        """CREATE TABLE IF NOT EXISTS health(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT NOT NULL, kind TEXT NOT NULL,   -- sleep | exercise
-            label TEXT DEFAULT '', value_min INTEGER DEFAULT 0,
-            start_ts TEXT DEFAULT '', end_ts TEXT DEFAULT '',
-            ts TEXT)"""
-    )
-    return con
+    # health 表的建表语句统一在 usage_db.SCHEMA（§0.5 说表与数据保留，
+    # 所以语句还在，只是不再在这里重复）
+    return usage_db.connect()
 
 
 def health_save(date_str, kind, label, value_min, start_ts, end_ts):

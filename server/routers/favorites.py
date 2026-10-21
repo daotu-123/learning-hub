@@ -119,12 +119,19 @@ def background_refresh(interval: float = 300.0):
 
 
 def _usage_day_counts(date_str: str):
-    """当日 usage 表的条数与总时长（summary 用，不复制 usage 域的连接逻辑）。"""
+    """当日 usage 表的条数与总时长（summary 用，复用 usage 域的连接逻辑）。
+
+    必须走 usage_db.connect()：它保证表已建。这里原来是裸
+    `sqlite3.connect(USAGE_DB)`，**不建表**——首启（空数据目录）时
+    `SELECT ... FROM usage` 直接抛 `no such table: usage`，把 /api/summary
+    打成 500。而只要先访问过一次 /api/usage，表就被它的连接函数建出来，
+    同一个接口又恢复 200：**行为取决于请求顺序**，极难排查。
+    """
     import sqlite3
 
-    from config import USAGE_DB
+    import usage_db
 
-    con = sqlite3.connect(USAGE_DB)
+    con = usage_db.connect()
     con.row_factory = sqlite3.Row
     row = con.execute(
         "SELECT COUNT(*) AS n, COALESCE(SUM(day_ms),0) AS ms FROM usage WHERE date=?",

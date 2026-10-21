@@ -42,6 +42,7 @@ EXPECTED_MODULES = [
     "clientip",
     "media_sign",
     "security_headers",
+    "usage_db",
     "manage",
     "dump_routes",
     "main",

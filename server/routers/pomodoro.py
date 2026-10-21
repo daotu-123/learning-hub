@@ -15,20 +15,14 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from common import today_iso
-from config import USAGE_DB
+import usage_db
 
 router = APIRouter(tags=["pomodoro"])
 
 
 def _pomo_conn():
-    con = sqlite3.connect(USAGE_DB)
-    con.execute(
-        """CREATE TABLE IF NOT EXISTS pomodoro(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT NOT NULL, task TEXT DEFAULT '',
-            minutes INTEGER DEFAULT 25, ts TEXT)"""
-    )
-    return con
+    # 建表逻辑统一在 usage_db（含 pomodoro 表），不在这里重复 CREATE TABLE
+    return usage_db.connect()
 
 
 def pomodoro_save(date_str: str, task: str, minutes: int):

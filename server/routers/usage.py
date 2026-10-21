@@ -11,24 +11,16 @@ from typing import List
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from config import USAGE_DB
+import usage_db
 
 router = APIRouter(tags=["usage"])
 
 
 def _usage_conn():
-    con = sqlite3.connect(USAGE_DB)
-    con.execute(
-        """CREATE TABLE IF NOT EXISTS usage(
-            date TEXT, package TEXT, app_name TEXT, total_ms INTEGER, day_ms INTEGER,
-            PRIMARY KEY(date, package))"""
-    )
-    con.execute(
-        """CREATE TABLE IF NOT EXISTS usage_hourly(
-            date TEXT, hour INTEGER, seconds INTEGER,
-            PRIMARY KEY(date, hour))"""
-    )
-    return con
+    # 建表逻辑已统一收到 usage_db.connect()，不在这里重复 CREATE TABLE。
+    # 原来这里只建 usage / usage_hourly 两张表，而 pomodoro / health 由别的域
+    # 各自建——首启时按请求顺序不同，某些表会缺失（见 usage_db.py 顶部说明）。
+    return usage_db.connect()
 
 
 def usage_save(date_str: str, apps: List[dict]):

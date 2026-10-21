@@ -10,7 +10,6 @@ import datetime
 import hashlib
 import json
 import re
-import sqlite3
 import subprocess
 import sys
 import time
@@ -21,6 +20,8 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+
+import usage_db
 
 from . import vault_reader as vr
 from . import queue_reader as qr
@@ -36,7 +37,8 @@ from config import DATA_DIR
 SETTINGS_JSON = DATA_DIR / "settings.json"
 WALLPAPER_DIR = DATA_DIR / "wallpapers"
 WALLPAPER_DIR.mkdir(parents=True, exist_ok=True)
-USAGE_DB = config.USAGE_DB   # 工作台 SQLite（pomodoro 表）
+# 工作台 SQLite（pomodoro 表）——连接与建表统一走 usage_db，本文件不再
+# 自己写 sqlite3.connect + CREATE TABLE（那两处已并入 usage_db.SCHEMA）
 
 # 网页热更新源（单 App：web_dist/app 与 APK assets/www 同构；VERSION 为整数版本号）
 WEB_ROOT = Path(r"E:\agent\androd-app\server\web_dist")
@@ -172,14 +174,10 @@ def hub_wallpaper_get(name: str):
 
 # ---------------------------------------------------------------- 番茄钟（复用工作台 pomodoro 表）
 def _pomo_daily(date_str: str) -> dict:
-    con = sqlite3.connect(USAGE_DB)
+    # 建表逻辑统一在 usage_db.connect()，不在这里重复 CREATE TABLE。
+    # 原来这里与 hub_focus_save 各自抄了一份一模一样的 pomodoro 建表语句。
+    con = usage_db.connect()
     try:
-        con.execute(
-            """CREATE TABLE IF NOT EXISTS pomodoro(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL, task TEXT DEFAULT '',
-                minutes INTEGER DEFAULT 25, ts TEXT)"""
-        )
         row = con.execute(
             "SELECT COUNT(*) AS c, COALESCE(SUM(minutes),0) AS m FROM pomodoro WHERE date=?",
             (date_str,)).fetchone()
@@ -215,14 +213,8 @@ def hub_focus_save(r: PomoReportIn):
     date_str = r.date or datetime.date.today().isoformat()
     if not (1 <= r.minutes <= 180):
         raise HTTPException(status_code=400, detail="minutes 范围 1-180")
-    con = sqlite3.connect(USAGE_DB)
+    con = usage_db.connect()
     try:
-        con.execute(
-            """CREATE TABLE IF NOT EXISTS pomodoro(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL, task TEXT DEFAULT '',
-                minutes INTEGER DEFAULT 25, ts TEXT)"""
-        )
         con.execute(
             "INSERT INTO pomodoro(date, task, minutes, ts) VALUES(?,?,?,?)",
             (date_str, r.task[:120], r.minutes,
