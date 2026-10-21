@@ -18,6 +18,14 @@ import datetime
 import sys
 from typing import Optional
 
+# =====================================================================
+#  M3-P0 编码安全：**必须在任何 print 之前**执行。
+#  现象与理由见 stdiosafe.py 的模块注释（一处说明，main 与 manage 共用）。
+# =====================================================================
+from stdiosafe import force_utf8_stdio
+
+force_utf8_stdio()
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware

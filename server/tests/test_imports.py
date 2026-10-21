@@ -44,6 +44,7 @@ EXPECTED_MODULES = [
     "security_headers",
     "usage_db",
     "publicmode",
+    "stdiosafe",
     "manage",
     "dump_routes",
     # PyInstaller runtime hook：在入口脚本之前执行，改 stdout/stderr 的编码

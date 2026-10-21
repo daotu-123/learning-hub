@@ -33,6 +33,20 @@ import getpass
 import sys
 from pathlib import Path
 
+# =====================================================================
+#  M3-P0 编码安全：**必须在任何 print 之前**执行。
+#  与 main.py 同一个问题（现象与理由见 stdiosafe.py 的模块注释）。
+#
+#  这里从 stdiosafe 导入，而不是 from main import —— 后者会因为
+#  import main 而构建整个 FastAPI app 并 mkdir 数据目录：对管理 CLI 是
+#  意外副作用（它正要拒绝在数据目录不明确时写入，却又顺手把那个目录建出来）。
+#  复制一份则必然漂移：一个加了 errors="replace"、另一个没加，
+#  就是最难查的那种不一致。
+# =====================================================================
+from stdiosafe import force_utf8_stdio
+
+force_utf8_stdio()
+
 import auth_sessions
 from auth_sessions import (
     MIN_PASSWORD_LENGTH,
