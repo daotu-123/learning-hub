@@ -33,6 +33,7 @@ M2c 新增：
     HUB_TRUSTED_PROXIES      受信反代 IP/CIDR（逗号分隔）默认空 = 不采信 XFF
 """
 import os
+import sys
 from pathlib import Path
 
 
@@ -66,7 +67,29 @@ UDP_PORT = _env_int("HUB_UDP_PORT", "8638")   # 原 main.py 里写死的广播�
 
 # ---------------------------------------------------------------- 数据落点
 # 原 main.py:31 / hub/router.py:31 / hub/openmaic.py:33 / hub/writer.py:26
-DATA_DIR = _env_path("HUB_DATA_DIR", str(HUB_ROOT / "server" / "data"))
+#
+# 缺省值分两种情况，**只有打包运行时不同**：
+#   源码运行  <HUB_ROOT>\server\data          （历史行为，逐字不变）
+#   打包运行  <exe 所在目录>\data
+#
+# 为什么打包时要另算：HUB_ROOT 的缺省值是开发机路径 E:\agent\androd-app，
+# 这个字符串会被原样打进 exe。部署机上它不存在，于是 sqlite3.connect
+# 报一个看不懂的错；更糟的是若部署机上恰好有同名路径，账号会被**悄悄**
+# 写进去——本轮实测踩到：不带 HUB_DATA_DIR 跑 LearningHubManage.exe，
+# 账号写进了开发机的 server/data/account.json。
+# 其它 HUB_ROOT 派生路径（hub_web / web_dist）都有"不存在就回退到
+# sys._MEIPASS"的判断，唯独 DATA_DIR 没有（它是要被创建的目标，
+# 没法用存在性判断），所以必须在这里显式处理。
+def _default_data_dir() -> str:
+    if getattr(sys, "frozen", False):
+        try:
+            return str(Path(sys.executable).resolve().parent / "data")
+        except OSError:
+            return "data"
+    return str(HUB_ROOT / "server" / "data")
+
+
+DATA_DIR = _env_path("HUB_DATA_DIR", _default_data_dir())
 USAGE_DB = DATA_DIR / "usage.db"     # 原 main.py:34 / hub/router.py:35
 
 # ---------------------------------------------------------------- Obsidian vault

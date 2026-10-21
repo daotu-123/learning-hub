@@ -45,6 +45,9 @@ EXPECTED_MODULES = [
     "usage_db",
     "manage",
     "dump_routes",
+    # PyInstaller runtime hook：在入口脚本之前执行，改 stdout/stderr 的编码
+    # 并按需 tee 到文件。它是打包链路的一环，同样必须可导入。
+    "pyi_rth_utf8_io",
     "main",
     # routers/ 十个业务域
     "routers",

@@ -224,6 +224,59 @@ def test_hub_root_drives_data_dir_default():
     assert got["data"] == r"D:\deploy\hub\server\data"
 
 
+# ---------------- 打包运行时的 DATA_DIR 缺省值 ----------------
+# 这一组是本轮踩出来的：HUB_ROOT 的缺省值是开发机路径 E:\agent\androd-app，
+# 它会被原样打进 exe。部署机上该路径不存在 → sqlite 报看不懂的错；
+# 更糟的是若部署机上恰好有同名路径，账号会被悄悄写进去
+# （实测：不带 HUB_DATA_DIR 跑 LearningHubManage.exe，账号写进了开发机
+#  server/data/account.json）。
+# 修法：frozen 下 DATA_DIR 缺省改成 <exe 所在目录>\data。
+def _frozen_config_env(extra: dict) -> dict:
+    """子进程里伪装成 PyInstaller frozen 运行，再看 DATA_DIR 落点。
+
+    用环境变量把 exe 路径传进去，子进程里 setattr(sys, 'frozen', True)
+    与 sys.executable 后再 import config。
+    """
+    code = (
+        "import json,os,sys;"
+        + "".join(f"os.environ[{k!r}]={v!r};" for k, v in extra.items())
+        + "sys.frozen=True;"
+        + f"sys.executable={extra.pop('_EXE_', r'C:\\Deploy\\LearningHub\\LearningHub.exe')!r};"
+        + "import config;"
+        "print(json.dumps({'data':str(config.DATA_DIR),"
+        "'root':str(config.HUB_ROOT),'usage':str(config.USAGE_DB)}))"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=str(SERVER_DIR), capture_output=True, text=True,
+    )
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)
+
+
+def test_frozen_data_dir_defaults_to_exe_sibling():
+    """打包运行时：不设 HUB_DATA_DIR → <exe 目录>\data，而不是开发机路径。"""
+    got = _frozen_config_env({"_EXE_": r"C:\Deploy\LearningHub\LearningHub.exe"})
+    assert got["data"] == r"C:\Deploy\LearningHub\data"
+    assert got["usage"] == r"C:\Deploy\LearningHub\data\usage.db"
+
+
+def test_frozen_data_dir_still_honours_env():
+    """设了 HUB_DATA_DIR 就听它的——缺省值改了，优先级没改。"""
+    got = _frozen_config_env({
+        "HUB_DATA_DIR": r"D:\LearningHub\data",
+        "_EXE_": r"C:\Deploy\LearningHub\LearningHub.exe",
+    })
+    assert got["data"] == r"D:\LearningHub\data"
+
+
+def test_frozen_data_dir_independent_of_hub_root():
+    """打包时 HUB_ROOT 缺省仍是开发机路径，但 DATA_DIR 不能再跟着它走。"""
+    got = _frozen_config_env({"_EXE_": r"C:\Deploy\LearningHub\LearningHub.exe"})
+    assert got["root"] == r"E:\agent\androd-app"      # HUB_ROOT 保持历史缺省
+    assert "androd-app" not in got["data"]            # 但 DATA_DIR 不跟它走
+
+
 def test_bad_port_raises_instead_of_silently_defaulting():
     """端口写错必须炸，不能静默回落到 8637（否则"改端口没生效"极难排查）。"""
     with pytest.raises(subprocess.CalledProcessError):
