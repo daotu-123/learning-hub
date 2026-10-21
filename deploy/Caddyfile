@@ -1,0 +1,97 @@
+# =====================================================================
+#  LearningHub 反向代理配置（Caddy for Windows）
+#
+#  放置位置：与 LearningHubSvc.exe 同机，通常 C:\LearningHub\deploy\Caddyfile
+#  启动方式：见 docs/deploy-windows.md「反向代理」一节
+#
+#  -------------------------------------------------------------------
+#  **本文件最重要的一条**（配错了限流就等于没配）：
+#
+#      header_up X-Forwarded-For {remote_host}
+#
+#  {remote_host} 是**与 Caddy 建立连接的真实来源 IP**。
+#  绝不能写成 {http.request.header.X-Forwarded-For} —— 那是客户端可控的
+#  请求头，攻击者填什么就是什么。用了后者：
+#      · 登录退避按 (IP, 账号) 计数 → 每个请求换个假 IP，退避永远不触发；
+#      · 全局限流按 IP 计 → 同理可无限换 IP 绕过；
+#      · 更糟的是服务端 clientip.py 的采信规则会把它当成真实地址记进日志，
+#        事后排查时看到的 IP 全是假的。
+#
+#  服务端侧必须配套：HUB_TRUSTED_PROXIES 里要有 Caddy 的地址
+#  （同机部署就是 127.0.0.1）。默认空 = 完全不采信 XFF，那时限流会把
+#  整个 Caddy 当成一个 IP，同一条 NAT 下的所有用户互相触发限流。
+#  install-service.ps1 默认已写 127.0.0.1，反代不在本机时必须改。
+# =====================================================================
+
+{
+	# ACME 账号邮箱：自动签发/续期证书时 Let's Encrypt 用来发到期通知。
+	# **必须改成 owner 自己的邮箱**，否则证书到期前收不到提醒。
+	email owner@example.com
+
+	# 关掉管理 API 端点（默认 localhost:2019）。
+	# 公网机器上少一个监听端口就少一个暴露面，配置改完重启 Caddy 即可。
+	admin off
+}
+
+# ---------------------------------------------------------------------
+#  站点块：把 example.com 换成 owner 自己的域名。
+#  Caddy 会为该域名自动申请证书并把 80 的请求 301 到 443，
+#  所以这里**不需要**手写 http→https 跳转块。
+# ---------------------------------------------------------------------
+hub.example.com {
+	# 压缩。对 /app 的 JS/CSS 与 /api 的 JSON 都有明显收益。
+	encode zstd gzip
+
+	# HSTS：告诉浏览器以后只用 https 访问这个域名。
+	# 只对域名生效，不影响 owner 继续用 http://<局域网IP>:8637 直连
+	# （那是另一个 host，不在 HSTS 作用域内）。
+	# 若 owner 还想短期保留 http 访问做调试，先把这行注释掉。
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+	# -----------------------------------------------------------------
+	#  反代到本机服务。**不要在这里重复设置安全响应头**：
+	#  服务端 security_headers.py 已经下发 CSP / X-Content-Type-Options /
+	#  Referrer-Policy / X-Frame-Options。CSP 在多处下发时浏览器取**交集**，
+	#  在代理侧再抄一份很容易与 meta 里的那份不一致 —— 而不一致不等于更严，
+	#  是"看起来配了其实没约束住"。要改 CSP 请改 web/index.html 与
+	#  server/security_headers.py 两处（有测试断言它们一致）。
+	# -----------------------------------------------------------------
+	reverse_proxy 127.0.0.1:8637 {
+		# 真实来源 IP —— 见文件顶部说明，这一行是限流正确性的前提
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+
+		# Host 保持原样。Caddy 默认就是这么做的，显式写出来是给读配置
+		# 的人一个信号：这里改了会把前端的同源判断打破（页面与 API 不再
+		# 同源，CORS 白名单里没有公网域名，请求会直接被浏览器拦掉）。
+		header_up Host {host}
+
+		# 超时。上传壁纸/照片时大 body 需要更长的写超时；
+		# 默认 30s 写超时在慢网络上传 10MB 图片偶尔会断。
+		transport http {
+			response_header_timeout 60s
+			read_timeout 90s
+			write_timeout 90s
+		}
+	}
+
+	# Caddy 自己的访问日志。与服务端 <DataDir>\server.log 互补：
+	# 服务端日志能看到被限流/鉴权拦截的请求（404/401/429），
+	# Caddy 日志能看到 TLS 握手与真实客户端 IP。
+	# Windows 路径用正斜杠或双反斜杠。
+	log {
+		output file C:/LearningHub/logs/caddy-access.log {
+			roll_size 10MB
+			roll_keep 5
+		}
+	}
+}
+
+# ---------------------------------------------------------------------
+#  备选：没有域名 / 不想开 80 443 时，用 Cloudflare Tunnel。
+#  见 docs/deploy-windows.md「备选方案：Cloudflare Tunnel」一节，
+#  配置文件在同目录 cloudflared-config.yml。
+#  隧道方案下 XFF 由 cloudflared 自己处理，HUB_TRUSTED_PROXIES 的配法
+#  与 Caddy 不同，文档里有说明。
+# ---------------------------------------------------------------------

@@ -1,0 +1,62 @@
+# =====================================================================
+#  Cloudflare Tunnel（cloudflared）备选配置
+#
+#  什么时候用这个而不是 Caddy：
+#    · 没有公网 IP / 运营商给了 NAT（Caddy 直连不了）
+#    · 80/443 被 IIS 或别的服务占着，且不想动它们
+#    · 不想在机器上管证书（Tunnel 的证书在 Cloudflare 侧）
+#    · 想少开一个入站端口（Tunnel 是出站连接，无需任何入站规则）
+#
+#  代价：流量经过 Cloudflare，多一跳；免费版有带宽/速率上的软限制；
+#  且 Cloudflare 会看到明文流量（它终结 TLS）。
+#
+#  放置位置：C:\LearningHub\deploy\cloudflared-config.yml
+#  启动方式：见 docs/deploy-windows.md「备选方案」一节
+# =====================================================================
+
+# 隧道 UUID。执行 `cloudflared tunnel create learninghub` 后会生成，
+# 把生成的值填到这里。**不要照抄这个占位符。**
+tunnel: 00000000-0000-0000-0000-000000000000
+
+# cloudflared 凭据文件位置（tunnel create 时一起生成）。
+credentials-file: C:/Users/Administrator/.cloudflared/00000000-0000-0000-0000-000000000000.json
+
+#  ingress 规则：**顺序敏感**，第一条匹配即生效。
+#  所以 catch-all 必须放在最后。
+ingress:
+  # 主域名 → 本机服务
+  - hostname: hub.example.com
+    service: http://127.0.0.1:8637
+
+    # -------------------------------------------------------------------
+    #  X-Forwarded-For 的处理与 Caddy **不同**，这是最容易配错的地方：
+    #
+    #  cloudflared 默认会把客户端 IP 写进 CF-Connecting-IP，
+    #  并且**默认不在 X-Forwarded-For 里追加真实客户端 IP**（它透传客户端
+    #  发来的那个，可能是伪造的）。
+    #
+    #  下面的 http2Origin / originRequest 组合是为了让服务端拿到可信 IP。
+    #  服务端 clientip.py 的采信规则是「从右往左取第一个非受信地址」，
+    #  所以这里让 cloudflared 追加以真实 IP 后，服务端还要把
+    #  Cloudflare 的回源 IP 段加进 HUB_TRUSTED_PROXIES，
+    #  否则那一串追加的 IP 会被当成客户端地址 —— 而它是 Cloudflare 的。
+    #
+    #  Cloudflare 回源 IP 段官方列表：
+    #    https://www.cloudflare.com/ips-v4
+    #    https://www.cloudflare.com/ips-v6
+    #  （会变，部署时以页面为准，别抄文档里的旧值）
+    # -------------------------------------------------------------------
+    originRequest:
+      connectTimeout: 30s
+      noHappyEyeballs: false
+      # 不覆盖 Host（保持 hub.example.com），否则前端同源判断会被打破
+      httpHostHeader: hub.example.com
+
+  # 兜底规则：没有上面的 hostname 时返回 404。
+  # **这一条不能删** —— cloudflared 要求 ingress 有 catch-all，
+  # 没有它配置直接起不来。
+  - service: http_status:404
+
+# 日志。Tunnel 的日志与 Caddy 日志互补：这里能看到隧道建立/断开。
+log: C:/LearningHub/logs/cloudflared.log
+loglevel: info
