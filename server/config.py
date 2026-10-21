@@ -31,6 +31,14 @@ M2c 新增：
     HUB_LOGIN_MAX_DELAY      退避封顶秒数              默认 60
     HUB_LOGIN_WINDOW         "连续失败"窗口秒数        默认 900
     HUB_TRUSTED_PROXIES      受信反代 IP/CIDR（逗号分隔）默认空 = 不采信 XFF
+
+M3-P5 新增（公网模式）：
+    HUB_PUBLIC       1 = 本机服务经隧道/反代对公网暴露。改变四件事：
+                     监听缺省收成 127.0.0.1、关 UDP 发现广播、
+                     **关掉回环免鉴权豁免**（隧道流量看起来来自 127.0.0.1，
+                     不关等于公网裸奔）、要求显式指定 HUB_DATA_DIR。
+                     不设 = 行为与之前逐字一致。
+    HUB_LOCAL_BYPASS 1 = 本机免令牌调试。**默认关**，公网模式下极危险。
 """
 import os
 import sys
@@ -55,6 +63,18 @@ def _env_int(name: str, default: str) -> int:
         raise RuntimeError(f"环境变量 {name} 不是合法整数: {os.environ.get(name)!r}")
 
 
+def _env_bool(name: str, default: str = "0") -> bool:
+    """布尔环境变量。
+
+    只认明确的肯定写法（1/true/yes/on，大小写不敏感），其余一律为假。
+    **故意不认 "false"/"0" 之外的模糊值**：这类开关配错的后果不对称——
+    HUB_PUBLIC 配错会让服务绑到公网、关掉回环豁免；宁可少认几个写法，
+    也不能让 `HUB_PUBLIC=yes please` 这种值悄悄生效。
+    """
+    v = (os.environ.get(name) or "").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
 # ---------------------------------------------------------------- 项目根
 # 原 main.py:30 的硬编码。VPS 上项目不会装在 E:\agent\androd-app，必须可覆盖。
 HUB_ROOT = _env_path("HUB_ROOT", r"E:\agent\androd-app")
@@ -64,6 +84,36 @@ PROJECT_ROOT = HUB_ROOT          # 兼容旧名（main.py 里以 APP_ROOT 引用
 HUB_HOST = _env("HUB_HOST", "0.0.0.0")
 HUB_PORT = _env_int("HUB_PORT", "8637")
 UDP_PORT = _env_int("HUB_UDP_PORT", "8638")   # 原 main.py 里写死的广播目标端口
+
+# ---------------------------------------------------------------- 公网模式
+# HUB_PUBLIC=1 表示「这台机器上的服务会被隧道/反代送到公网」。
+# 数据策略不变（vault 仍在家用 PC），变的只是**暴露面**：
+#   监听   缺省从 0.0.0.0 收到 127.0.0.1 —— TLS 由隧道或反代终结，
+#         没有任何理由让服务本身直接监听公网网卡
+#   UDP    关掉局域网自动发现广播。广播是给同一广播域里的手机 App 用的，
+#         公网模式下它只会告诉同网段的所有设备"这里有个服务"，
+#         而公网部署者要的恰恰相反
+#   回环   **关掉「回环免鉴权」豁免**。这一条是公网模式最致命的地方：
+#         cloudflared / tailscale funnel 都是从**本机 127.0.0.1** 连进来的，
+#         不关豁免等于给公网开了一扇后门——所有流量都以"本机"的身份进来，
+#         永远不需要令牌。
+#   数据目录 必须显式指定（见 startup_public_guard）：
+#         公网模式下数据落点含糊 = 账号落在没人记得的地方
+#
+# 不设 HUB_PUBLIC 时，以上全部不生效，本机/局域网行为与之前逐字一致。
+HUB_PUBLIC = _env_bool("HUB_PUBLIC", "0")
+
+# 本机免令牌调试开关。**只在公网模式下被读取**（判定见 publicmode.local_bypass_enabled）：
+#   未设 HUB_PUBLIC      → 回环豁免照旧开启（历史行为，不看这个变量）
+#   HUB_PUBLIC=1         → 只有 HUB_LOCAL_BYPASS=1 才开豁免
+# 公网模式下它是三个开关里最危险的一个：开了之后任何人都能免令牌访问
+# （因为他们的流量经隧道后看起来来自 127.0.0.1）。启动横幅与 server.log
+# 都会打印它是否开启，见 main.print 横幅与 main._log_security_mode。
+HUB_LOCAL_BYPASS = _env_bool("HUB_LOCAL_BYPASS", "0")
+
+# 公网模式下 HUB_HOST 的缺省值。显式设了 HUB_HOST 仍然优先——
+# 有的人确实要让服务同时对内网可达（比如手机在家时直连）。
+HUB_HOST = _env("HUB_HOST", "127.0.0.1" if HUB_PUBLIC else "0.0.0.0")
 
 # ---------------------------------------------------------------- 数据落点
 # 原 main.py:31 / hub/router.py:31 / hub/openmaic.py:33 / hub/writer.py:26

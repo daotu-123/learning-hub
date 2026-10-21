@@ -39,6 +39,12 @@ from auth_sessions import (
 # clientip 不 import ratelimit，两者各自独立，方便测试单独构造实例。
 from ratelimit import LIMITER, is_upload_path, retry_after
 from clientip import is_loopback, request_client_ip
+# 公网模式规则一律走 `publicmode.xxx()` 的**模块属性**调用，不 from-import。
+# 原因：`from publicmode import local_bypass_enabled` 会把函数对象在导入期
+# 绑死到本模块命名空间，测试 monkeypatch publicmode.local_bypass_enabled
+# 之后 main 里的引用仍指向旧函数，公网模式测试会全部"通过但没测到东西"。
+# 这不是洁癖：它让测试失去意义，而失去意义的绿灯比红灯更危险。
+import publicmode
 import media_sign
 
 # 上面这 4 个（socket / time / sys / uvicorn）只在 `if __name__ == "__main__":` 块
@@ -52,7 +58,7 @@ import media_sign
 # M1a 配置化：路径/端口/令牌全部来自 config（环境变量驱动，缺省值 = 原硬编码）。
 # M1b-2：settings 读写已下沉 common.py（auth_token 与 routers/settings 共用）。
 from common import get_settings, save_settings
-from config import DATA_DIR, HUB_AUTH_TOKEN, HUB_HOST, HUB_PORT, UDP_PORT
+from config import DATA_DIR, HUB_AUTH_TOKEN, HUB_HOST, HUB_PORT, HUB_PUBLIC, UDP_PORT
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -89,6 +95,23 @@ def _loopback(host: str) -> bool:
     """判断请求是否来自本机。转调 clientip.is_loopback —— M2c 起登录限流
     也需要同一份判定，而从 routers 反向 import main 会成环。"""
     return is_loopback(host)
+
+
+def _loopback_exempt(host: str) -> bool:
+    """回环请求是否**豁免**鉴权/限流。
+
+    与 `_loopback` 的区别就是 M3-P5 引入的那条：
+    「来自回环」是事实，「回环该被豁免」是策略。公网模式下这两者必须分开——
+
+        cloudflared / tailscale funnel 都是从**本机 127.0.0.1** 连进来的。
+
+    所以公网模式一开，`127.0.0.1` 的来源不再自动等于「可信的本机」，
+    必须由 `HUB_LOCAL_BYPASS=1` 显式声明"我确实要让本机免令牌"。
+    没设 `HUB_PUBLIC` 时本函数恒等于 `_loopback`，行为逐字不变。
+    """
+    if not _loopback(host):
+        return False
+    return publicmode.local_bypass_enabled()
 
 
 def auth_token() -> str:
@@ -190,7 +213,7 @@ async def rate_limit_guard(request: Request, call_next):
     if not path.startswith("/api/") and not path.startswith(MEDIA_PREFIXES):
         return await call_next(request)
     host = request.client.host if request.client else ""
-    if _loopback(host):
+    if _loopback_exempt(host):
         return await call_next(request)
     if request.method == "OPTIONS":
         return await call_next(request)
@@ -248,7 +271,7 @@ async def auth_guard(request: Request, call_next):
     if not path.startswith("/api/") and not is_media:
         return await call_next(request)
     host = request.client.host if request.client else ""
-    if _loopback(host):
+    if _loopback_exempt(host):
         return await call_next(request)
     if path in AUTH_EXEMPT_API:
         return await call_next(request)
@@ -350,6 +373,13 @@ def _startup():
     """冷启动: 加载持久化索引 + 启动后台刷新线程（实现在 favorites 域）"""
     from routers.favorites import background_refresh, load_index_on_start
 
+    # M3-P5：把公网模式的五项安全参数也打进日志。
+    # 为什么要在这里再打一遍：`__main__` 块里的 print 只在 `python main.py`
+    # 时执行，而**服务化部署走的是 uvicorn main:app**，那条路径一个 print 都
+    # 看不到。排障时最需要知道的恰恰是"这机器上跑的到底是不是公网模式"，
+    # 所以必须走 logging 进 server.log，两种启动方式都覆盖。
+    _log_security_mode()
+
     load_index_on_start()
     t = threading.Thread(target=background_refresh, daemon=True)
     t.start()
@@ -359,6 +389,36 @@ def _startup():
         # flush=True：stdout 被重定向到文件时是块缓冲的，不 flush 这行会
         # 一直躺在缓冲区里，直到进程退出才落盘——而进程可能被杀。
         print("  " + NO_ACCOUNT_MESSAGE, flush=True)
+
+
+def _log_security_mode():
+    """把公网模式的安全参数打进 server.log（两种启动方式都覆盖）。"""
+    import logging
+
+    lg = logging.getLogger("hub.security")
+    from clientip import TRUSTED
+
+    lg.warning(
+        "运行模式=%s 监听=%s:%s UDP广播=%s 回环免令牌豁免=%s 受信代理=%s 数据目录=%s",
+        "公网" if HUB_PUBLIC else "本机/局域网",
+        HUB_HOST, SERVER_PORT,
+        "开" if publicmode.udp_discovery_enabled(HUB_PUBLIC) else "关",
+        "开" if publicmode.local_bypass_enabled() else "关",
+        ",".join(str(n) for n in TRUSTED.nets) or "(空)",
+        DATA_DIR,
+    )
+    if HUB_PUBLIC and not TRUSTED:
+        # 这两个组合起来是最容易出事的情形：公网模式 + 不采信任何代理头
+        # → 限流把整个隧道当成一个 IP，一人用满额度全站被限。
+        lg.warning(
+            "⚠ 公网模式但 HUB_TRUSTED_PROXIES 为空：真实客户端 IP 取不到，"
+            "限流会把整个隧道算作单一来源。隧道在本机时至少设 127.0.0.1。"
+        )
+    if HUB_PUBLIC and publicmode.local_bypass_enabled():
+        lg.warning(
+            "⚠ 公网模式 + 回环免令牌豁免已开：经隧道进来的流量（来源 127.0.0.1）"
+            "同样免令牌，等于对公网开放无鉴权访问。"
+        )
 
 
 @app.get("/")
@@ -402,18 +462,52 @@ def start_udp_broadcast(port: int, name: str) -> None:
 
 
 if __name__ == "__main__":
+    # M3-P5 公网模式硬闸：**必须在建任何目录、开任何端口之前**跑。
+    # 放在这里而不是 _startup() 里，是因为 _startup() 是 FastAPI 的 startup
+    # 事件，那时 uvicorn 已经绑好端口了——"拒绝启动"就变成了"先开门再关门"。
+    _guard = publicmode.startup_public_guard()
+    if _guard:
+        sys.exit(_guard)
+
     LAN_IP = find_lan_ip()
-    # UDP 广播：手机 App 自动发现（学习中枢 8637）
+    # UDP 广播：手机 App 自动发现（学习中枢 8637）。
+    # 公网模式下关掉——广播是给同一广播域里的手机 App 用的，对外暴露时
+    # 它只会告诉同网段所有设备"这里有个服务"，与目的相反。
     import platform
-    start_udp_broadcast(SERVER_PORT, platform.node() or "PC")
+    _udp_on = publicmode.udp_discovery_enabled(HUB_PUBLIC)
+    if _udp_on:
+        start_udp_broadcast(SERVER_PORT, platform.node() or "PC")
     # 文件日志 (后台静默启动时无控制台, 排障依赖 server.log)
     # M1a-D：query 里的 token/sig 在落盘前打码（见 logging_setup 的说明）
     LOG_FILE = DATA_DIR / "server.log"
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     LOG_CONFIG = build_log_config(LOG_FILE)
-    print("=" * 56)
+    print("=" * 60)
     print("  工作台同步服务器 v1.0.0")
-    print(f"  本机 IP: {LAN_IP}   端口: {SERVER_PORT}")
+    # M3-P5：模式相关五项（模式 / 绑定 / UDP / 回环豁免 / 受信代理）
+    # 在公网模式下是**安全参数**，不打印就等于让人凭猜部署。
+    print(f"  运行模式: {'公网模式（HUB_PUBLIC=1）' if HUB_PUBLIC else '本机/局域网模式'}")
+    print(f"  监听地址: {HUB_HOST}:{SERVER_PORT}"
+          + ("  ← 公网模式下 TLS 由隧道/反代终结" if HUB_PUBLIC else ""))
+    print(f"  UDP 广播自动发现: {'开启' if _udp_on else '已关闭（公网模式）'}")
+    _bypass = publicmode.local_bypass_enabled()
+    if _bypass:
+        print("  ⚠ 回环免令牌豁免: **已开启**（HUB_LOCAL_BYPASS=1）")
+        print("     本机任何进程都可免令牌访问全部数据；"
+              "公网模式下经隧道进来的流量也享受同一豁免。")
+    else:
+        print("  回环免令牌豁免: 已关闭（回环请求同样需要令牌）")
+    from clientip import TRUSTED
+    print("  受信代理列表: " + (", ".join(str(n) for n in TRUSTED.nets)
+                                if TRUSTED else "（空 = 不采信任何代理头）"))
+    if HUB_PUBLIC:
+        print("-" * 60)
+        print("  公网模式要点：")
+        print("    · 需在隧道/反代侧设置受信代理，否则真实客户端 IP 取不到，")
+        print("      限流会把整个隧道算成一个 IP。")
+        print("    · 本机桌面端访问需要令牌（已登录的浏览器会自动带上会话）。")
+    if not HUB_PUBLIC:
+        print(f"  本机 IP: {LAN_IP}")
     ts_ip = find_tailscale_ip()
     if ts_ip:
         print(f"  Tailscale 远程地址: http://{ts_ip}:{SERVER_PORT}  (手机不连同一 WiFi 也能同步)")
@@ -422,7 +516,7 @@ if __name__ == "__main__":
     print(f"  数据目录: {DATA_DIR}")
     print(f"  日志文件: {LOG_FILE}")
     print(f"  手机 App 设置服务器地址为: http://<本机IP>:{SERVER_PORT}")
-    print("=" * 56)
+    print("=" * 60)
 
     # 端口已被占用（服务已在运行）→ 只打开网页，不重复启动（与 start_hub.bat 行为一致）
     def _port_busy(port: int) -> bool:

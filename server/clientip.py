@@ -29,6 +29,11 @@
 ——空 = 不信任任何代理 = 所有部署在反代后面时都必须显式配置，
 否则限流会把整个反代当成一个 IP（一个人用满额度，全家被限）。
 
+隧道场景的一个补充：cloudflared 回源时会**保留客户端自己写的 XFF**，
+真实客户端 IP 放在 `CF-Connecting-IP`。这不影响本模块的核心规则
+（从右往左取第一个非受信地址照样能择出真实客户端），所以
+`request_client_ip` 只在 XFF 缺失时才把 CF 头当补充。
+
 ## 端口与非法值
 
 XFF 里的项可能是 `1.2.3.4:5678`（带端口），也可能是 `unknown`。
@@ -144,6 +149,37 @@ def client_ip(peer_host: str, xff_header: Optional[str]) -> str:
 
 
 def request_client_ip(request) -> str:
-    """从 Starlette Request 取。供中间件与端点共用。"""
+    """从 Starlette Request 取。供中间件与端点共用。
+
+    头优先级：`X-Forwarded-For` → `CF-Connecting-IP` → TCP 直连来源。
+
+    **为什么 CF-Connecting-IP 排在 XFF 后面而不是前面**：
+    Cloudflare Tunnel（cloudflared）在回源时**保留客户端发来的
+    X-Forwarded-For**，而它自己写的真实客户端 IP 放在 `CF-Connecting-IP`。
+    也就是说经隧道进来的流量，XFF 里最左边那一项是**客户端可写的**
+    （攻击者会把自己伪造的值塞在最左边）。
+
+    这里没有直接采信 CF 头，而是靠 client_ip() 的"从右往左取第一个非受信
+    地址"规则把它择出来：受信代理（cloudflared 本身，通常是 127.0.0.1）
+    追加在右边的部分由受控基础设施生成，从右往左跳过受信项后遇到的第一项
+    就是真实客户端。所以 CF-Connecting-IP 在这里只作为
+    "XFF 缺失/全受信时的补充"，不单独成为信任来源。
+    """
     peer = request.client.host if request.client else ""
-    return client_ip(peer, request.headers.get("x-forwarded-for"))
+    xff = request.headers.get("x-forwarded-for")
+    ip = client_ip(peer, xff)
+    # XFF 完全没给（或整条链都受信、退化成 peer）时，看 CF 头。
+    # 注意这里**只在 peer 受信时**才看 CF 头——不受信来源伪造
+    # CF-Connecting-IP 和伪造 XFF 一样无效。
+    cf = request.headers.get("cf-connecting-ip")
+    if cf and peer_is_trusted(peer) and (not xff or xff.strip() == ""):
+        parsed = _parse_addr(cf)
+        if parsed is not None and parsed not in TRUSTED:
+            return str(parsed)
+    return ip
+
+
+def peer_is_trusted(peer_host: str) -> bool:
+    """直连来源是否在受信代理列表里（解析失败一律视为不可信）。"""
+    peer = _parse_addr(peer_host)
+    return peer is not None and peer in TRUSTED
