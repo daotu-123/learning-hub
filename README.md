@@ -204,9 +204,35 @@ M2c 新增的安全相关变量（详见下文「反向代理与公网部署」�
 
 ## 反向代理与公网部署
 
+> **部署到 Windows 机器请直接看 [`docs/deploy-windows.md`](docs/deploy-windows.md)**，
+> 那里是从零到可用的完整流程（核对 VERSION → 建账号 → 装服务 → 打通隧道 →
+> 防火墙 → 备份 → 上线自查清单），并且带一节「Windows 平台已知坑」。
+> 本节是**原理与取值依据**，部署时的那份是**操作步骤**，两者互补不重复。
+
 本节是把服务放到公网（VPS + 域名 + TLS）时**必须逐条落实**的东西。
 M2c 的安全硬化（限流、登录退避、媒体鉴权、CSP）让公网暴露成为可能，
 但下面这几条代理侧的配合**代码里管不了**，漏一条等于前面的防护被绕过。
+
+### 0. 公网模式开关 `HUB_PUBLIC`
+
+M3-P5 起，服务本身知道"自己被隧道暴露了"，靠 `HUB_PUBLIC=1` 切换行为：
+
+| 项 | 平时 | `HUB_PUBLIC=1` |
+|---|---|---|
+| 监听地址 | `0.0.0.0` | `127.0.0.1`（TLS 由隧道终结） |
+| UDP 自动发现广播 | 开 | 关 |
+| 回环免令牌豁免 | 开 | **关** ← 最关键 |
+| 数据目录 | 可缺省 | **必须显式设 `HUB_DATA_DIR`**，否则拒绝启动（退出码 3） |
+
+**为什么必须关回环豁免**：cloudflared / tailscale funnel 都是从
+**本机 `127.0.0.1`** 连进来的。不关的话，所有公网流量都被当成"来自本机"，
+一个令牌都不用就能读全部数据。代价是本机桌面端要重新登录一次；
+确实需要本机免令牌调试时用 `HUB_LOCAL_BYPASS=1` 显式开，
+但启动横幅会打醒目警告——**公网模式下开了它等于对公网开放无鉴权访问**。
+
+判断"这机器上跑的到底是不是公网模式"看两处：启动横幅，以及
+`<DataDir>\server.log` 里那条 `运行模式=… 监听=… UDP广播=… 回环免令牌豁免=… 受信代理=…`
+（服务化部署走 uvicorn，**横幅一个都看不到**，只有日志里有）。
 
 ### 1. TLS 必须在代理层 terminates
 
@@ -214,9 +240,11 @@ M2c 的安全硬化（限流、登录退避、媒体鉴权、CSP）让公网暴�
 
 - Caddy：直接写站点块，自动签发证书，**必须显式设置 `reverse_proxy` 头**（见下）
 - Nginx：`certbot` 签发，`ssl_certificate` / `ssl_certificate_key` 挂载
+- Tailscale Funnel：证书由 tailnet 自动签发（需管理台开 HTTPS Certificates）
 
 对外只开 443，**不要把 8637 直接暴露到公网**。若必须直连，则用防火墙
-（`ufw` / 安全组）把 8637 限制到 `127.0.0.1`，只允许代理访问。
+（`ufw` / 安全组 / `deploy/firewall-rules.ps1`）把 8637 限制到
+`127.0.0.1`，只允许代理访问。
 
 ### 2. Host 与 X-Forwarded-For（最容易配错的一条）
 
@@ -310,13 +338,17 @@ chmod 600 /srv/learninghub/server/data/settings.json /srv/learninghub/server/dat
 
 ### 5. 上线前自查
 
+- [ ] `type exe\VERSION` → `commit=` 是期望上线的提交，`tree=` 是 `-clean`
+      （`*.exe` 不进版本控制，没有 VERSION 就无法判断部署的是哪次构建）
 - [ ] 8637 未直接对公网开放，只允许代理访问
 - [ ] 域名有 TLS，HTTP 自动跳 HTTPS
 - [ ] `HUB_TRUSTED_PROXIES` 已设为代理的实际地址（**不是留空**）
 - [ ] 代理显式设置 `Host` 与 `X-Forwarded-For`（且用的是真实来源 IP，不是客户端可控的头）
+- [ ] `HUB_PUBLIC=1` 时确认 `server.log` 里 `回环免令牌豁免=关`
 - [ ] 限流阈值按实际使用人数确认过
 - [ ] `server/data/` 权限 700，密钥文件 600
-- [ ] `python manage.py set-password` 已设置账号口令（**不要只靠共享令牌**）
+- [ ] `manage.py set-password`（或 `LearningHubManage.exe`）已设置账号口令
+      （**不要只靠共享令牌**）
 - [ ] 顺手验证一次：`curl -I https://你的域名/app` 应能看到
       `content-security-policy` / `x-content-type-options` / `referrer-policy` 三个头
 
@@ -342,6 +374,49 @@ chmod 600 /srv/learninghub/server/data/settings.json /srv/learninghub/server/dat
 
 旧 `/hub` 页**不下发 CSP**：`server/hub_web/hub.html` 还有内联 `<style>` 与内联
 `<script>`，套上会直接打挂旧中枢。通用安全头（nosniff 等）照发。
+
+---
+
+## Windows 平台已知坑
+
+以下几条都是本项目**实际踩过**的，不是通用建议。完整部署流程见
+[`docs/deploy-windows.md`](docs/deploy-windows.md)。
+
+1. **Windows PowerShell 5.1 读无 BOM 的 UTF-8 `.ps1` 会按 cp936 误读**。
+   GBK 解码器会把中文之间的 `\n` 当 trail byte 吃掉（实测 291 行的脚本被合并成
+   256 行），于是报出一堆「缺少右 `}`」「Try 缺 Catch」这类**看着像真错**的
+   语法错误，而且行号是乱的。**所有 `.ps1` 必须存成 UTF-8 with BOM。**
+   它和 `.bat` 的区别值得记住：`.bat` 里写中文会**立刻**炸（REM 行被拆成 bogus
+   命令），`.ps1` 里写中文不会立刻报错，而是**安静地改行号**——后者阴险得多，
+   所以 `build-exe.bat` 的注释一律用英文。
+
+2. **`PYTHONIOENCODING` / `PYTHONUTF8` 对打包 exe 无效**（三种环境输出字节完全
+   相同，都是 cp936）。PyInstaller 的 bootloader 在解释器初始化之前就接管了标准流，
+   环境变量来不及生效。解法是打包内置的 runtime hook `server/pyi_rth_utf8_io.py`。
+   不修的后果不只是乱码：非中文 Windows 上中文 `print()` 会抛
+   `UnicodeEncodeError`，**整个服务起不来且没有任何日志**。
+
+3. **GUI 子系统的 exe 没有 stdout/stderr**，服务化后日志文件会是空的。
+   服务必须用 console 版 `LearningHubSvc.exe`。
+
+4. **`.spec` 里写 `distpath` 无效**（PyInstaller 6 只注入只读的 `DISTPATH`，
+   不读该变量），落点只能由命令行的 `--distpath` 指定，所以由 `build-exe.bat` 钉死。
+
+5. **`Compress-Archive` / `Expand-Archive` 会把进度条写进输出流**，任务计划程序
+   重定向日志时会把日志冲爆且带回车覆盖。改用 `ZipFile::CreateFromDirectory`。
+
+6. **`[CmdletBinding(SupportsShouldProcess)]` 会自动加 `-WhatIf`**，再显式声明一次
+   会直接报「对命令多次定义了名为 WhatIf 的参数」。
+
+7. **隧道改写 `Host` 头会打破前端同源判断**（CORS 白名单里没有公网域名），
+   反代侧必须保持 `Host` 原样。
+
+8. **Android App 的服务器地址是 `http://`**，UDP 自动发现走局域网广播；用隧道
+   域名时需在 App 里手工填 `https://<你的地址>`。
+
+9. **`*.exe` 不进版本控制**，git 无法回答"exe 里是哪次构建"。`build-exe.bat` 每次
+   会写 `exe/VERSION`（commit + dirty 标记 + 产物清单），**部署第一步就是核对它**。
+   P1-1 那次重打撞上过一份落后两个里程碑的产物，而构建日志是成功的。
 
 ## 数据与隐私
 
