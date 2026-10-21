@@ -181,6 +181,11 @@ def test_revoke_all_sessions(store):
 
 
 # ================================================================ A CLI
+# 注意：下面每条都带 --force-default-dir。M3-P0-3 加了「目标数据目录是
+# 仓库内默认 server/data 就拦下」的防呆闸门，而这些用例只关心口令逻辑，
+# 账号文件早已被 store 夹具重定向到临时目录（auth_sessions.ACCOUNT_JSON），
+# DATA_DIR 却仍指向仓库默认值。加这个标志是明确告诉闸门"我知道落点，
+# 这些用例测的不是防呆"——防呆自己的用例在 test_manage.py。
 
 def test_cli_set_password_interactive(store, monkeypatch, capsys):
     """交互式输入两遍：一致才通过；输出里绝不能出现口令。"""
@@ -195,7 +200,7 @@ def test_cli_set_password_interactive(store, monkeypatch, capsys):
     ])
     monkeypatch.setattr(manage, "_read_secret", lambda prompt="": next(answers))
 
-    rc = manage.main(["set-password", "--username", "tester"])
+    rc = manage.main(["set-password", "--username", "tester", "--force-default-dir"])
     assert rc == 0
     out = capsys.readouterr().out
     assert not leaks(out, good), "CLI 输出里出现了口令"
@@ -215,7 +220,7 @@ def test_cli_reads_from_stdin_when_not_a_tty(store, monkeypatch, capsys):
 
     good = "cli-stdin-good-password"
     monkeypatch.setattr(_sys, "stdin", io.StringIO(good + "\n" + good + "\n"))
-    rc = manage.main(["set-password", "--username", "tester"])
+    rc = manage.main(["set-password", "--username", "tester", "--force-default-dir"])
     assert rc == 0
     acct = json.loads((store / "account.json").read_text(encoding="utf-8"))
     assert acct["password_hash"].startswith("$argon2id$")
@@ -228,7 +233,7 @@ def test_cli_refuses_existing_account_without_reset(store, monkeypatch, capsys):
 
     _make_account(store)
     monkeypatch.setattr(manage, "_read_secret", lambda prompt="": NEW_PW)
-    rc = manage.main(["set-password"])
+    rc = manage.main(["set-password", "--force-default-dir"])
     assert rc == 1
     out = capsys.readouterr().out
     assert "--reset" in out
@@ -245,7 +250,7 @@ def test_cli_reset_overwrites_and_revokes_sessions(store, monkeypatch, capsys):
     assert auth_sessions.validate_session(token) is not None
 
     monkeypatch.setattr(manage, "_read_secret", lambda prompt="": NEW_PW)
-    rc = manage.main(["set-password", "--reset"])
+    rc = manage.main(["set-password", "--reset", "--force-default-dir"])
     assert rc == 0
     out = capsys.readouterr().out
     assert not leaks(out, NEW_PW), "CLI 输出里出现了口令"
@@ -261,7 +266,7 @@ def test_cli_min_length(store, monkeypatch, capsys):
     short = "x" * (MIN_PASSWORD_LENGTH - 1)
     answers = iter([short, short, "x" * MIN_PASSWORD_LENGTH, "x" * MIN_PASSWORD_LENGTH])
     monkeypatch.setattr(manage, "_read_secret", lambda prompt="": next(answers))
-    rc = manage.main(["set-password"])
+    rc = manage.main(["set-password", "--force-default-dir"])
     assert rc == 0
     assert auth_sessions.account_exists() is True
     assert auth_sessions.verify_password("x" * MIN_PASSWORD_LENGTH) is True

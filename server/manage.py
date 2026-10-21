@@ -13,10 +13,25 @@
   - 已有账号时默认拒绝（避免误覆盖）；要覆盖必须显式加 --reset，
     而 --reset 会连带撤销该账号的全部会话（改口令即踢下线）。
   - 撤销会话不需要口令参数：改口令本身就意味着"让旧凭据全部失效"。
+
+M3-P0-3 防呆（为什么需要）：`manage.py` 的数据目录默认是
+`<仓库>/server/data`。在作者开发机上这没问题，但把仓库 clone 到部署机后，
+**不设 HUB_DATA_DIR 就跑这个命令，账号会被悄悄写进 clone 目录里的
+server/data**——而那地方既不在备份脚本的清单里，也不在部署文档写的
+/etc 路径上，等发现时账号已经建在了错误的位置，还得重新建一遍
+（建完旧会话也不会自动迁移）。所以：
+
+  - 每次启动都先打印 `目标数据目录：<绝对路径>`，让落点一眼可见；
+  - 若该路径就是仓库内默认目录且没加 `--force-default-dir`：
+      交互式 → 要求明确输入 y 确认；
+      非交互（管道 / 脚本 / 计划任务）→ **直接退出码 2**，什么都不写。
+    非交互一律拒绝而不是默认放行：脚本里跑这个命令的人，看到的输出
+    就是一封"你写错地方了"的信，而不是一个建在错误位置的账号。
 """
 import argparse
 import getpass
 import sys
+from pathlib import Path
 
 from auth_sessions import (
     MIN_PASSWORD_LENGTH,
@@ -25,8 +40,83 @@ from auth_sessions import (
     revoke_all_sessions,
     set_password,
 )
+from config import DATA_DIR
 
 DEFAULT_USERNAME = "owner"
+
+# 非交互且目标目录是仓库内默认目录时的退出码。
+# 用 2 而不是 1：1 在本 CLI 里已被"账号已存在且未加 --reset"占用，
+# 两者含义不同，混用会让调用方无法区分"被防呆拦下"和"业务拒绝"。
+EXIT_REFUSED_DEFAULT_DIR = 2
+
+
+def _resolve_data_dir() -> Path:
+    """目标数据目录的绝对路径（解析掉 . 与 .. 等相对成分）。"""
+    return Path(DATA_DIR).expanduser().resolve()
+
+
+def _repo_default_data_dir():
+    """仓库内默认数据目录（`<本文件所在目录>/data`）；打包运行时返回 None。
+
+    用 `Path(__file__).parent` 而不是 config.HUB_ROOT：HUB_ROOT 是可以被
+    环境变量改写的，"仓库在哪"这个问题只有文件自己的位置说得准。
+    PyInstaller 打包运行时 __file__ 指向解包临时目录，那里没有仓库语义，
+    因此返回 None 表示"无法判定，跳过防呆"（打包产物本来也不含 manage.py）。
+    """
+    if getattr(sys, "frozen", False):
+        return None
+    try:
+        return (Path(__file__).resolve().parent / "data").resolve()
+    except OSError:
+        return None
+
+
+def _confirm(prompt: str) -> bool:
+    """交互式确认。只有明确的 y/Y/yes 才算同意，其余一律视为拒绝。"""
+    try:
+        ans = input(prompt)
+    except EOFError:
+        return False
+    return ans.strip().lower() in ("y", "yes")
+
+
+def guard_data_dir(force_default_dir: bool):
+    """防呆闸门。返回 None = 放行；返回整数 = 应以该退出码结束。
+
+    顺带每次都打印目标目录——这行不是给防呆用的，是给"我到底写到哪了"
+这个问题用的：账号文件路径不在任何输出里出现过，只有这里会讲。
+    """
+    target = _resolve_data_dir()
+    print("目标数据目录：%s" % target)
+
+    if force_default_dir:
+        print("已显式指定 --force-default-dir，跳过「仓库内默认目录」确认。")
+        return None
+
+    repo_default = _repo_default_data_dir()
+    if repo_default is None or target != repo_default:
+        return None
+
+    hint = (
+        "该路径是本仓库内的默认数据目录。\n"
+        "  在开发机上这么用没问题；若这是部署机，账号会被写进 clone 目录，\n"
+        "  而不是部署文档/备份脚本约定的位置。\n"
+        "  正确做法：设置 HUB_DATA_DIR 指向部署数据目录；\n"
+        "  确实想写这里就加 --force-default-dir。"
+    )
+    isatty = getattr(sys.stdin, "isatty", None)
+    if isatty is not None and isatty():
+        print("⚠ " + hint)
+        if _confirm("确认把账号写到上面的目录吗？[y/N] "):
+            return None
+        print("已取消，未写入任何内容。")
+        return 1
+
+    # 非交互：一律拒绝。见模块 docstring 里"为什么不是默认放行"。
+    print("拒绝执行：目标数据目录是仓库内默认目录，且未加 --force-default-dir。")
+    print(hint)
+    print("退出码 %d（未写入任何内容）。" % EXIT_REFUSED_DEFAULT_DIR)
+    return EXIT_REFUSED_DEFAULT_DIR
 
 
 def _read_secret(prompt: str) -> str:
@@ -98,12 +188,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--reset", action="store_true",
         help="覆盖已有账号，并撤销该账号的全部会话",
     )
+    sp.add_argument(
+        "--force-default-dir", action="store_true",
+        help="确认把账号写进仓库内默认数据目录 server/data（不加则防呆闸门会拦）",
+    )
     sp.set_defaults(func=cmd_set_password)
     return p
 
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    # 防呆闸门在任何子命令之前跑：哪怕以后加更多子命令，
+    # "写到哪了"这件事也必须第一个说清楚。
+    code = guard_data_dir(getattr(args, "force_default_dir", False))
+    if code is not None:
+        return code
     return args.func(args)
 
 
